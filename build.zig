@@ -73,4 +73,22 @@ pub fn build(b: *std.Build) void {
     });
     const run_viewport_tests = b.addRunArtifact(viewport_tests);
     test_step.dependOn(&run_viewport_tests.step);
+
+    const coloring_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/test_coloring.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{
+                    .name = "coloring",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/core/coloring.zig"),
+                    }),
+                },
+            },
+        }),
+    });
+    const run_coloring_tests = b.addRunArtifact(coloring_tests);
+    test_step.dependOn(&run_coloring_tests.step);
 }
