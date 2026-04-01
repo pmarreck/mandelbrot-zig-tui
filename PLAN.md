@@ -1,16 +1,16 @@
 # Mandelbrot TUI Explorer — Plan
 
-## In Progress
-- [ ] Project scaffolding (build.zig, flake.nix, scripts)
-- [ ] Core mandelbrot computation (f128 escape-time + region fill)
-- [ ] Core viewport math (screen↔complex, zoom, pan, adaptive iter)
-- [ ] Core coloring (density chars + 256-color gradient)
-- [ ] TUI input parsing (keys, arrows, SGR mouse)
-- [ ] TUI terminal control (raw mode, mouse, SIGWINCH)
-- [ ] TUI renderer (pure state → ANSI buffer)
-- [ ] TUI app event loop + main entry point
-- [ ] CLI test suite
-- [ ] Documentation
+## Completed
+- [x] Project scaffolding (build.zig, flake.nix, scripts) — ~2026-04-01 14:45 EST
+- [x] Core mandelbrot computation (f128 escape-time + region fill) — ~2026-04-01 15:00 EST
+- [x] Core viewport math (screen↔complex, zoom, pan, adaptive iter) — ~2026-04-01 15:15 EST
+- [x] Core coloring (density chars + 256-color gradient) — ~2026-04-01 15:30 EST
+- [x] TUI input parsing (keys, arrows, SGR mouse) — ~2026-04-01 15:45 EST
+- [x] TUI terminal control (raw mode, mouse, SIGWINCH) — ~2026-04-01 16:00 EST
+- [x] TUI renderer (pure state → ANSI buffer) — ~2026-04-01 16:15 EST
+- [x] TUI app event loop + main entry point — ~2026-04-01 16:30 EST
+- [x] CLI test suite — ~2026-04-01 16:40 EST
+- [x] Documentation & cleanup — ~2026-04-01 16:45 EST
 
 ## Future Enhancements
 - [ ] Multithreaded computation (thread pool, row-band splitting)

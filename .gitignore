@@ -1,0 +1,11 @@
+AGENTS.md
+CLAUDE.md
+jj_cheatsheet.md
+ZIG_RECENT_API_CHANGES*
+zig-out/
+zig-cache/
+.zig-cache/
+result
+result-*
+inbox/
+.DS_Store
