@@ -109,4 +109,30 @@ pub fn build(b: *std.Build) void {
     });
     const run_input_tests = b.addRunArtifact(input_tests);
     test_step.dependOn(&run_input_tests.step);
+
+    const mandelbrot_mod = b.createModule(.{
+        .root_source_file = b.path("src/core/mandelbrot.zig"),
+    });
+    const coloring_mod = b.createModule(.{
+        .root_source_file = b.path("src/core/coloring.zig"),
+    });
+    const renderer_mod = b.createModule(.{
+        .root_source_file = b.path("src/tui/renderer.zig"),
+        .imports = &.{
+            .{ .name = "mandelbrot", .module = mandelbrot_mod },
+            .{ .name = "coloring", .module = coloring_mod },
+        },
+    });
+    const renderer_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/test_renderer.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "renderer", .module = renderer_mod },
+            },
+        }),
+    });
+    const run_renderer_tests = b.addRunArtifact(renderer_tests);
+    test_step.dependOn(&run_renderer_tests.step);
 }
