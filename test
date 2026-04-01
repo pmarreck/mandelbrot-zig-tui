@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -u
+
+errors=0
+
+echo "=== Zig unit tests ==="
+nix develop -c zig build test -Doptimize=Debug 2>&1
+errors=$((errors + $?))
+
+if [ -f tests/cli/test_cli.bash ]; then
+    echo ""
+    echo "=== CLI tests ==="
+    bash tests/cli/test_cli.bash
+    errors=$((errors + $?))
+fi
+
+echo ""
+if [ "$errors" -eq 0 ]; then
+    echo "All tests passed."
+else
+    echo "FAILURES: $errors error(s)"
+fi
+
+exit "$errors"
