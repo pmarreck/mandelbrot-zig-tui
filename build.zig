@@ -91,4 +91,22 @@ pub fn build(b: *std.Build) void {
     });
     const run_coloring_tests = b.addRunArtifact(coloring_tests);
     test_step.dependOn(&run_coloring_tests.step);
+
+    const input_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/test_input.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{
+                    .name = "input",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/tui/input.zig"),
+                    }),
+                },
+            },
+        }),
+    });
+    const run_input_tests = b.addRunArtifact(input_tests);
+    test_step.dependOn(&run_input_tests.step);
 }
