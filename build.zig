@@ -55,4 +55,22 @@ pub fn build(b: *std.Build) void {
     });
     const run_core_tests = b.addRunArtifact(core_tests);
     test_step.dependOn(&run_core_tests.step);
+
+    const viewport_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/test_viewport.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{
+                    .name = "viewport",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/core/viewport.zig"),
+                    }),
+                },
+            },
+        }),
+    });
+    const run_viewport_tests = b.addRunArtifact(viewport_tests);
+    test_step.dependOn(&run_viewport_tests.step);
 }
