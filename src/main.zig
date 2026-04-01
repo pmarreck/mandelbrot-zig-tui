@@ -1,5 +1,5 @@
 const std = @import("std");
-
+const mandelbrot = @import("core/mandelbrot.zig");
 pub fn main() !void {
     var stderr_buf: [4096]u8 = undefined;
     var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);

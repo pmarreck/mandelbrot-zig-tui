@@ -37,4 +37,22 @@ pub fn build(b: *std.Build) void {
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    const core_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/test_mandelbrot.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{
+                    .name = "mandelbrot",
+                    .module = b.createModule(.{
+                        .root_source_file = b.path("src/core/mandelbrot.zig"),
+                    }),
+                },
+            },
+        }),
+    });
+    const run_core_tests = b.addRunArtifact(core_tests);
+    test_step.dependOn(&run_core_tests.step);
 }
