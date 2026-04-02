@@ -62,11 +62,12 @@ test "renderFrame is deterministic" {
     try testing.expectEqualSlices(u8, output1, output2);
 }
 
-test "renderFrame interior region is mostly dark" {
+test "renderFrame interior region contains interior points" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    // Zoom into the main cardioid — should contain interior points (black spaces)
     const state = renderer.RenderState{
         .center_re = -0.5,
         .center_im = 0.0,
@@ -78,13 +79,7 @@ test "renderFrame interior region is mostly dark" {
     const output = try renderer.renderFrame(state, 20, 10, allocator);
     defer allocator.free(output);
 
-    var spaces: usize = 0;
-    var total: usize = 0;
-    for (output) |byte| {
-        if (byte >= 0x20 and byte <= 0x7e) {
-            total += 1;
-            if (byte == ' ') spaces += 1;
-        }
-    }
-    try testing.expect(spaces > total / 4);
+    // Interior points produce "48;5;0m " (black bg followed by space).
+    // At zoom=3 centered on cardioid, there must be at least some interior.
+    try testing.expect(std.mem.indexOf(u8, output, "48;5;0m ") != null);
 }

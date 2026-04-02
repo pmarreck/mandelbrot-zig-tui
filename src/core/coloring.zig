@@ -8,23 +8,21 @@ pub const Cell = struct {
 	bg_color: u8,
 };
 
-const density_chars = " .:-=+*#%@";
+/// Density characters for exterior points — cyclic mapping.
+/// Space excluded: every exterior cell must be visible so fg color shows.
+const density_chars = ".:-=+*#%@";
 
 /// Map an iteration count to a renderable terminal cell.
 /// Interior points (iter == max_iter) produce a black space.
-/// Exterior points get an ASCII density char for luminance + cyclic 256-color gradient.
-/// Uses HSV-style hue rotation through the 6x6x6 ANSI color cube (indices 16-231).
+/// Exterior points get a cyclic ASCII density char + cyclic 256-color gradient.
+/// Character and color both cycle independently for maximum visual texture.
 pub fn iterToCell(iter: u32, max_iter: u32) Cell {
 	if (iter >= max_iter) {
 		return .{ .char = ' ', .fg_color = 0, .bg_color = 0 };
 	}
 
-	// Use (max_iter - 1) as divisor so the last escapable iteration (max_iter-1)
-	// maps to the final density character '@'. Clamp for safety.
-	const denom = if (max_iter > 1) @as(f64, @floatFromInt(max_iter - 1)) else 1.0;
-	const ratio = @as(f64, @floatFromInt(iter)) / denom;
-	const char_idx: usize = @intFromFloat(ratio * @as(f64, density_chars.len - 1));
-	const char = density_chars[@min(char_idx, density_chars.len - 1)];
+	// Cyclic character mapping — every exterior point gets a visible character
+	const char = density_chars[iter % density_chars.len];
 
 	const fg = iterToColor256(iter);
 

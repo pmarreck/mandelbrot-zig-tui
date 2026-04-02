@@ -8,14 +8,23 @@ test "interior point (iter == max_iter) renders as black space" {
 	try testing.expectEqual(@as(u8, 0), cell.bg_color);
 }
 
-test "iter=0 maps to first density character (space)" {
+test "iter=0 maps to first density character (dot)" {
 	const cell = coloring.iterToCell(0, 256);
-	try testing.expectEqual(@as(u8, ' '), cell.char);
+	try testing.expectEqual(@as(u8, '.'), cell.char);
 }
 
-test "density characters span the full range" {
-	const density = " .:-=+*#%@";
-	var seen = [_]bool{false} ** 10;
+test "exterior points never produce space character" {
+	const max_iter: u32 = 1000;
+	var i: u32 = 0;
+	while (i < max_iter) : (i += 1) {
+		const cell = coloring.iterToCell(i, max_iter);
+		try testing.expect(cell.char != ' ');
+	}
+}
+
+test "density characters cycle across iterations" {
+	const density = ".:-=+*#%@";
+	var seen = [_]bool{false} ** 9;
 	const max_iter: u32 = 1000;
 	var i: u32 = 0;
 	while (i < max_iter) : (i += 1) {
