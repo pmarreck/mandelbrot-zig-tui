@@ -2,22 +2,38 @@
 // Mandelbrot escape-time computation using f128 precision.
 // Pure function: no I/O, no allocations, no side effects.
 
-/// Compute escape iteration for a single point in the complex plane.
-/// Returns the iteration count at which |z|^2 > 4, or max_iter if the point
-/// is (likely) in the Mandelbrot set. Uses f128 for ~33 digits of precision,
-/// enabling deep zooms far beyond f64's ~15-digit limit.
-pub fn computeIterations(c_re: f128, c_im: f128, max_iter: u32) u32 {
+const std = @import("std");
+const math = std.math;
+
+/// Bailout radius squared. Must be large (>=256) for smooth coloring
+/// (the log-log correction converges properly with large bailout).
+const BAILOUT_SQ: f128 = 65536.0; // 256^2
+
+/// Sentinel value for interior points (in the Mandelbrot set).
+pub const INTERIOR: f64 = -1.0;
+
+/// Compute smooth (fractional) escape iteration for a single point.
+/// Returns a continuous f64 value using the normalized iteration count
+/// formula: n + 1 - log2(log2(|z_n|)). Interior points return INTERIOR (-1.0).
+/// Uses f128 for ~33 digits of precision in the z iteration.
+pub fn computeIterations(c_re: f128, c_im: f128, max_iter: u32) f64 {
 	var z_re: f128 = 0.0;
 	var z_im: f128 = 0.0;
 	var i: u32 = 0;
 	while (i < max_iter) : (i += 1) {
 		const z_re2 = z_re * z_re;
 		const z_im2 = z_im * z_im;
-		if (z_re2 + z_im2 > 4.0) return i;
+		if (z_re2 + z_im2 > BAILOUT_SQ) {
+			// Smooth coloring: n + 1 - log2(log2(|z|))
+			const mod_sq: f64 = @floatCast(z_re2 + z_im2);
+			const log_zn = @log(mod_sq) / 2.0; // log(|z|)
+			const nu = @log(log_zn / @log(2.0)) / @log(2.0); // log2(log2(|z|))
+			return @as(f64, @floatFromInt(i)) + 1.0 - nu;
+		}
 		z_im = 2.0 * z_re * z_im + c_im;
 		z_re = z_re2 - z_im2 + c_re;
 	}
-	return max_iter;
+	return INTERIOR;
 }
 
 /// Parameters for computing a rectangular region of the complex plane.
@@ -32,10 +48,11 @@ pub const RegionParams = struct {
 	aspect_ratio: f64,
 };
 
-/// Compute escape iterations for a rectangular grid of the complex plane.
+/// Compute smooth escape iterations for a rectangular grid of the complex plane.
 /// Output buffer must have length >= width * height. Fills in row-major order.
+/// Interior points are stored as INTERIOR (-1.0).
 /// Designed for future parallelization: sub-regions can be computed independently.
-pub fn computeRegion(params: RegionParams, out: []u32) void {
+pub fn computeRegion(params: RegionParams, out: []f64) void {
 	const w: f128 = @floatFromInt(params.width);
 	const h: f128 = @floatFromInt(params.height);
 	const aspect: f128 = @floatCast(params.aspect_ratio);

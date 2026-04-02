@@ -132,6 +132,20 @@ pub fn processEvent(state: AppState, event: input.Event) AppState {
 			applyViewState(&s, new_view);
 			s.needs_redraw = true;
 		},
+		.scroll_up => |pos| {
+			// Scroll up = zoom in at cursor position
+			const view = toViewState(s);
+			const new_view = viewport.zoomAt(view, ZOOM_FACTOR, pos.col, pos.row, s.term_width, s.term_height, ASPECT_RATIO);
+			applyViewState(&s, new_view);
+			s.needs_redraw = true;
+		},
+		.scroll_down => |pos| {
+			// Scroll down = zoom out at cursor position
+			const view = toViewState(s);
+			const new_view = viewport.zoomAt(view, 1.0 / ZOOM_FACTOR, pos.col, pos.row, s.term_width, s.term_height, ASPECT_RATIO);
+			applyViewState(&s, new_view);
+			s.needs_redraw = true;
+		},
 		.arrow_up, .arrow_down, .arrow_left, .arrow_right => {
 			const dir: viewport.Direction = switch (event) {
 				.arrow_up => .up,

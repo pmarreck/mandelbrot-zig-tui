@@ -16,6 +16,9 @@ pub fn build(b: *std.Build) void {
     });
     const coloring_mod = b.createModule(.{
         .root_source_file = b.path("src/core/coloring.zig"),
+        .imports = &.{
+            .{ .name = "mandelbrot", .module = mandelbrot_mod },
+        },
     });
     const viewport_mod = b.createModule(.{
         .root_source_file = b.path("src/core/viewport.zig"),
@@ -127,6 +130,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "coloring", .module = coloring_mod },
+                .{ .name = "mandelbrot", .module = mandelbrot_mod },
             },
         }),
     });

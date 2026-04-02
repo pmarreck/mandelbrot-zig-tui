@@ -79,6 +79,28 @@ test "parse SGR mouse right-click at col=10, row=5" {
 	}
 }
 
+test "parse SGR scroll wheel up (button 64)" {
+	const event = input.parseEvent("\x1b[<64;20;10M");
+	switch (event) {
+		.scroll_up => |pos| {
+			try testing.expectEqual(@as(u16, 19), pos.col);
+			try testing.expectEqual(@as(u16, 9), pos.row);
+		},
+		else => return error.TestUnexpectedResult,
+	}
+}
+
+test "parse SGR scroll wheel down (button 65)" {
+	const event = input.parseEvent("\x1b[<65;20;10M");
+	switch (event) {
+		.scroll_down => |pos| {
+			try testing.expectEqual(@as(u16, 19), pos.col);
+			try testing.expectEqual(@as(u16, 9), pos.row);
+		},
+		else => return error.TestUnexpectedResult,
+	}
+}
+
 test "unknown bytes parse as unknown" {
 	const event = input.parseEvent(&[_]u8{0xFF});
 	try testing.expectEqual(input.Event.unknown, event);

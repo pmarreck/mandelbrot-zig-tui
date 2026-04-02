@@ -1,82 +1,76 @@
 // src/core/coloring.zig
-// Maps iteration count to terminal cell: ASCII density character + 256 ANSI color.
+// Maps smooth iteration count to terminal cell: ASCII density char + true-color RGB.
+// Uses Bernstein polynomial palette (Wikipedia Mandelbrot) with log transform.
 // Pure function: no I/O, no side effects.
+
+const std = @import("std");
+const mandelbrot = @import("mandelbrot");
+
+pub const RGB = struct {
+	r: u8,
+	g: u8,
+	b: u8,
+};
 
 pub const Cell = struct {
 	char: u8,
-	fg_color: u8,
-	bg_color: u8,
+	color: RGB,
+	is_interior: bool,
 };
 
 /// Density characters for exterior points — cyclic mapping.
 /// Space excluded: every exterior cell must be visible so fg color shows.
 const density_chars = ".:-=+*#%@";
 
-/// Map an iteration count to a renderable terminal cell.
-/// Interior points (iter == max_iter) produce a black space.
-/// Exterior points get a cyclic ASCII density char + cyclic 256-color gradient.
-/// Character and color both cycle independently for maximum visual texture.
-pub fn iterToCell(iter: u32, max_iter: u32) Cell {
-	if (iter >= max_iter) {
-		return .{ .char = ' ', .fg_color = 0, .bg_color = 0 };
+/// Map a smooth iteration count to a renderable terminal cell.
+/// Interior points (smooth_iter == INTERIOR) produce a black space.
+/// Exterior points get a cyclic density char + Bernstein polynomial RGB color.
+pub fn iterToCell(smooth_iter: f64, max_iter: u32) Cell {
+	if (smooth_iter == mandelbrot.INTERIOR) {
+		return .{ .char = ' ', .color = .{ .r = 0, .g = 0, .b = 0 }, .is_interior = true };
 	}
 
-	// Cyclic character mapping — every exterior point gets a visible character
-	const char = density_chars[iter % density_chars.len];
+	// Cyclic character mapping based on integer part of smooth iteration
+	const int_iter: u32 = @intFromFloat(@max(0.0, smooth_iter));
+	const char = density_chars[int_iter % density_chars.len];
 
-	const fg = iterToColor256(iter);
+	// Log transform: spread low iteration counts across more of the palette.
+	// Without this, most pixels at zoom=1 (escaping in 1-20 iters) cluster
+	// in a tiny slice of the color range.
+	const t = logTransform(smooth_iter, max_iter);
 
-	return .{ .char = char, .fg_color = fg, .bg_color = 0 };
+	const color = bernsteinPalette(t);
+
+	return .{ .char = char, .color = color, .is_interior = false };
 }
 
-/// Map iteration count to ANSI 256-color index (16-231 range).
-/// Smooth cyclic HSV gradient through the 6x6x6 color cube.
-fn iterToColor256(iter: u32) u8 {
-	const t = @as(f64, @floatFromInt(iter % 256)) / 256.0;
+/// Log transform to spread iteration values across [0,1].
+/// Maps smooth_iter to a value in [0, 1) using log scaling,
+/// then applies a cyclic wrap for pleasing color bands at all zoom levels.
+fn logTransform(smooth_iter: f64, max_iter: u32) f64 {
+	const max_f: f64 = @floatFromInt(max_iter);
+	// Log scale to spread low values; +1 to avoid log(0)
+	const log_val = @log(smooth_iter + 1.0) / @log(max_f + 1.0);
+	// Multiply by a period factor and take fractional part for cyclic banding
+	const period = 3.0; // controls number of color cycles visible
+	return log_val * period - @floor(log_val * period);
+}
 
-	const phase = t * 6.0;
-	const sector: u32 = @intFromFloat(phase);
-	const frac = phase - @as(f64, @floatFromInt(sector));
+/// Bernstein polynomial palette — the classic Wikipedia Mandelbrot coloring.
+/// Maps t in [0,1] to RGB using cubic Bernstein basis polynomials.
+/// Produces a smooth blue → cyan → orange → yellow → dark gradient.
+fn bernsteinPalette(t: f64) RGB {
+	const t_c = std.math.clamp(t, 0.0, 1.0);
+	const t1 = 1.0 - t_c;
 
-	var r: u32 = 0;
-	var g: u32 = 0;
-	var b: u32 = 0;
-	const rise: u32 = @intFromFloat(frac * 5.0);
-	const fall: u32 = 5 - rise;
+	// Bernstein basis polynomials with hand-tuned coefficients
+	const r_f = 9.0 * t1 * t_c * t_c * t_c;
+	const g_f = 15.0 * t1 * t1 * t_c * t_c;
+	const b_f = 8.5 * t1 * t1 * t1 * t_c;
 
-	switch (sector % 6) {
-		0 => {
-			r = 5;
-			g = rise;
-			b = 0;
-		},
-		1 => {
-			r = fall;
-			g = 5;
-			b = 0;
-		},
-		2 => {
-			r = 0;
-			g = 5;
-			b = rise;
-		},
-		3 => {
-			r = 0;
-			g = fall;
-			b = 5;
-		},
-		4 => {
-			r = rise;
-			g = 0;
-			b = 5;
-		},
-		5 => {
-			r = 5;
-			g = 0;
-			b = fall;
-		},
-		else => unreachable,
-	}
-
-	return @intCast(16 + 36 * r + 6 * g + b);
+	return .{
+		.r = @intFromFloat(std.math.clamp(r_f * 255.0, 0.0, 255.0)),
+		.g = @intFromFloat(std.math.clamp(g_f * 255.0, 0.0, 255.0)),
+		.b = @intFromFloat(std.math.clamp(b_f * 255.0, 0.0, 255.0)),
+	};
 }

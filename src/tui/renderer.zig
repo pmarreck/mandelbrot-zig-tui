@@ -1,6 +1,7 @@
 // src/tui/renderer.zig
 // Pure function: RenderState + dimensions -> ANSI output buffer.
 // No I/O — returns a buffer that the caller writes to the terminal.
+// Uses 24-bit true-color escape sequences for smooth Bernstein palette gradients.
 
 const std = @import("std");
 const mandelbrot = @import("mandelbrot");
@@ -17,11 +18,8 @@ pub const RenderState = struct {
 const ASPECT_RATIO: f64 = 0.5;
 
 /// Render a complete frame as an ANSI-escaped byte buffer.
-/// Takes immutable render state and terminal dimensions, returns a fully-formed
-/// ANSI escape sequence buffer. The caller owns the returned memory and is
-/// responsible for writing it to the terminal and freeing it.
-/// Key technique: single-pass row-major scan with delta color encoding to
-/// minimize ANSI escape overhead.
+/// Uses 24-bit true-color (\x1b[38;2;R;G;Bm) for smooth gradients.
+/// Caller owns the returned memory.
 pub fn renderFrame(
     state: RenderState,
     width: u16,
@@ -31,7 +29,7 @@ pub fn renderFrame(
     const render_height: u16 = if (state.show_info and height > 1) height - 1 else height;
     const pixel_count: usize = @as(usize, width) * @as(usize, render_height);
 
-    const iter_buf = try allocator.alloc(u32, pixel_count);
+    const iter_buf = try allocator.alloc(f64, pixel_count);
     defer allocator.free(iter_buf);
 
     mandelbrot.computeRegion(.{
@@ -45,16 +43,17 @@ pub fn renderFrame(
     }, iter_buf);
 
     var output: std.ArrayListUnmanaged(u8) = .{};
-    // Ownership transfers to caller via toOwnedSlice — no defer deinit.
 
-    // Pre-allocate: cursor home (3) + per-cell worst case (~30 bytes for color+char) + info bar (~300)
-    try output.ensureTotalCapacity(allocator, 6 + pixel_count * 30 + 300);
+    // True-color escapes are ~20 bytes per color change: \x1b[38;2;RRR;GGG;BBBm
+    try output.ensureTotalCapacity(allocator, 6 + pixel_count * 25 + 300);
 
     // Cursor home
     try output.appendSlice(allocator, "\x1b[H");
 
-    var last_fg: u8 = 255;
-    var last_bg: u8 = 255;
+    var last_r: u8 = 255;
+    var last_g: u8 = 255;
+    var last_b: u8 = 255;
+    var last_interior: bool = false;
 
     var row: u16 = 0;
     while (row < render_height) : (row += 1) {
@@ -63,15 +62,23 @@ pub fn renderFrame(
             const idx = @as(usize, row) * @as(usize, width) + @as(usize, col);
             const cell = coloring.iterToCell(iter_buf[idx], state.max_iter);
 
-            // Only emit color escape when fg or bg changes from previous cell
-            if (cell.fg_color != last_fg or cell.bg_color != last_bg) {
-                var color_buf: [32]u8 = undefined;
-                const color_str = std.fmt.bufPrint(&color_buf, "\x1b[38;5;{d};48;5;{d}m", .{
-                    cell.fg_color, cell.bg_color,
-                }) catch unreachable;
-                try output.appendSlice(allocator, color_str);
-                last_fg = cell.fg_color;
-                last_bg = cell.bg_color;
+            // Delta color encoding: only emit escape when color changes
+            if (cell.is_interior and !last_interior) {
+                // Switch to black fg on black bg for interior
+                try output.appendSlice(allocator, "\x1b[38;2;0;0;0;48;2;0;0;0m");
+                last_interior = true;
+            } else if (!cell.is_interior) {
+                if (last_interior or cell.color.r != last_r or cell.color.g != last_g or cell.color.b != last_b) {
+                    var color_buf: [40]u8 = undefined;
+                    const color_str = std.fmt.bufPrint(&color_buf, "\x1b[38;2;{d};{d};{d};48;2;0;0;0m", .{
+                        cell.color.r, cell.color.g, cell.color.b,
+                    }) catch unreachable;
+                    try output.appendSlice(allocator, color_str);
+                    last_r = cell.color.r;
+                    last_g = cell.color.g;
+                    last_b = cell.color.b;
+                    last_interior = false;
+                }
             }
 
             try output.append(allocator, cell.char);
@@ -81,7 +88,7 @@ pub fn renderFrame(
         }
     }
 
-    // Info bar: reversed-video status line with coordinates and parameters
+    // Info bar
     if (state.show_info and height > 1) {
         try output.appendSlice(allocator, "\r\n");
         try output.appendSlice(allocator, "\x1b[0m\x1b[7m");
@@ -91,14 +98,13 @@ pub fn renderFrame(
         const cim_f64: f64 = @floatCast(state.center_im);
         const zoom_f64: f64 = @floatCast(state.zoom);
 
-        const info_str = std.fmt.bufPrint(&info_buf, " MANDELBROT re={d:.6} im={d:.6} zoom={e} iter={d}", .{
+        const info_str = std.fmt.bufPrint(&info_buf, " MANDELBROT_CENTER_RE={d:.15} MANDELBROT_CENTER_IM={d:.15} MANDELBROT_ZOOM={e} mandelbrot | iter={d}", .{
             cre_f64, cim_f64, zoom_f64, state.max_iter,
         }) catch " [info too long]";
 
         const info_len = @min(info_str.len, @as(usize, width));
         try output.appendSlice(allocator, info_str[0..info_len]);
 
-        // Pad the rest of the info bar width with spaces
         var pad: usize = info_len;
         while (pad < width) : (pad += 1) {
             try output.append(allocator, ' ');

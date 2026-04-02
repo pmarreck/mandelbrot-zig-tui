@@ -19,7 +19,8 @@ test "renderFrame produces output for small terminal" {
     defer allocator.free(output);
 
     try testing.expect(output.len > 0);
-    try testing.expect(std.mem.indexOf(u8, output, "\x1b[") != null);
+    // Should contain true-color ANSI escape sequences
+    try testing.expect(std.mem.indexOf(u8, output, "\x1b[38;2;") != null);
 }
 
 test "renderFrame with info bar includes coordinate info" {
@@ -35,7 +36,7 @@ test "renderFrame with info bar includes coordinate info" {
         .show_info = true,
     };
 
-    const output = try renderer.renderFrame(state, 40, 10, allocator);
+    const output = try renderer.renderFrame(state, 60, 10, allocator);
     defer allocator.free(output);
 
     try testing.expect(std.mem.indexOf(u8, output, "MANDELBROT") != null);
@@ -67,7 +68,6 @@ test "renderFrame interior region contains interior points" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Zoom into the main cardioid — should contain interior points (black spaces)
     const state = renderer.RenderState{
         .center_re = -0.5,
         .center_im = 0.0,
@@ -79,7 +79,6 @@ test "renderFrame interior region contains interior points" {
     const output = try renderer.renderFrame(state, 20, 10, allocator);
     defer allocator.free(output);
 
-    // Interior points produce "48;5;0m " (black bg followed by space).
-    // At zoom=3 centered on cardioid, there must be at least some interior.
-    try testing.expect(std.mem.indexOf(u8, output, "48;5;0m ") != null);
+    // Interior renders as black (0;0;0) followed by space
+    try testing.expect(std.mem.indexOf(u8, output, "0;0;0m ") != null);
 }

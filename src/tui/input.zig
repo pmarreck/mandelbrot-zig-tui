@@ -22,6 +22,8 @@ pub const Event = union(enum) {
 	arrow_right,
 	mouse_left: MousePos,
 	mouse_right: MousePos,
+	scroll_up: MousePos,
+	scroll_down: MousePos,
 	ctrl_c,
 	resize,
 	unknown,
@@ -94,6 +96,15 @@ fn parseSgrMouse(bytes: []const u8) Event {
 
 	const pos = MousePos{ .col = col, .row = row };
 
+	// SGR button encoding: bits 0-1 = button (0=left, 1=middle, 2=right)
+	// bit 6 (64) = scroll wheel. 64=scroll up, 65=scroll down.
+	if (button >= 64) {
+		return switch (button) {
+			64 => .{ .scroll_up = pos },
+			65 => .{ .scroll_down = pos },
+			else => .unknown,
+		};
+	}
 	return switch (button & 0x03) {
 		0 => .{ .mouse_left = pos },
 		2 => .{ .mouse_right = pos },
