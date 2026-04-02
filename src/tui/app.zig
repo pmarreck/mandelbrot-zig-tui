@@ -25,6 +25,8 @@ pub const AppState = struct {
 	/// Track mouse press position for drag detection.
 	/// null = no button currently held.
 	drag_start: ?input.MousePos = null,
+	/// Set to true once a drag motion event fires. Prevents release from zooming.
+	did_drag: bool = false,
 };
 
 pub fn defaultState() AppState {
@@ -124,45 +126,23 @@ pub fn processEvent(state: AppState, event: input.Event) AppState {
 			s.needs_redraw = true;
 		},
 		.mouse_left_press => |pos| {
-			// Record press position for drag detection
 			s.drag_start = pos;
+			s.did_drag = false;
 		},
 		.mouse_left_release => |pos| {
-			if (s.drag_start) |start| {
-				const dx = if (pos.col > start.col) pos.col - start.col else start.col - pos.col;
-				const dy = if (pos.row > start.row) pos.row - start.row else start.row - pos.row;
-				if (dx > 2 or dy > 1) {
-					// Drag: pan from start to release position
-					const view = toViewState(s);
-					const start_pt = viewport.screenToComplex(.{
-						.col = start.col, .row = start.row,
-						.center_re = s.center_re, .center_im = s.center_im,
-						.zoom = s.zoom, .width = s.term_width, .height = s.term_height,
-						.aspect_ratio = ASPECT_RATIO,
-					});
-					const end_pt = viewport.screenToComplex(.{
-						.col = pos.col, .row = pos.row,
-						.center_re = s.center_re, .center_im = s.center_im,
-						.zoom = s.zoom, .width = s.term_width, .height = s.term_height,
-						.aspect_ratio = ASPECT_RATIO,
-					});
-					_ = view;
-					// Pan = shift center by the delta (start - end, because dragging
-					// "grabs" the fractal and moves it)
-					s.center_re += start_pt.re - end_pt.re;
-					s.center_im += start_pt.im - end_pt.im;
-				} else {
-					// Click (no significant drag): zoom in at release position
-					const view = toViewState(s);
-					const new_view = viewport.zoomAt(view, ZOOM_FACTOR, pos.col, pos.row, s.term_width, s.term_height, ASPECT_RATIO);
-					applyViewState(&s, new_view);
-				}
+			if (!s.did_drag) {
+				// Clean click (no drag): zoom in at release position
+				const view = toViewState(s);
+				const new_view = viewport.zoomAt(view, ZOOM_FACTOR, pos.col, pos.row, s.term_width, s.term_height, ASPECT_RATIO);
+				applyViewState(&s, new_view);
 				s.needs_redraw = true;
 			}
 			s.drag_start = null;
+			s.did_drag = false;
 		},
 		.mouse_drag => |pos| {
 			// Live pan during drag: shift center by delta from last position
+			s.did_drag = true;
 			if (s.drag_start) |start| {
 				const start_pt = viewport.screenToComplex(.{
 					.col = start.col, .row = start.row,
@@ -358,12 +338,15 @@ test "processEvent: left drag pans without zooming" {
 	const old_zoom = s.zoom;
 	const old_re = s.center_re;
 	s = processEvent(s, .{ .mouse_left_press = .{ .col = 10, .row = 5 } });
+	s = processEvent(s, .{ .mouse_drag = .{ .col = 20, .row = 5 } });
+	s = processEvent(s, .{ .mouse_drag = .{ .col = 30, .row = 5 } });
 	s = processEvent(s, .{ .mouse_left_release = .{ .col = 30, .row = 5 } });
-	// Zoom should not change
+	// Zoom should not change — drag cancels zoom
 	try std.testing.expectEqual(old_zoom, s.zoom);
-	// Center should have shifted
+	// Center should have shifted from the drag
 	try std.testing.expect(s.center_re != old_re);
-	try std.testing.expect(s.needs_redraw);
+	// did_drag should be cleared after release
+	try std.testing.expect(!s.did_drag);
 }
 
 test "processEvent: resize triggers redraw" {
