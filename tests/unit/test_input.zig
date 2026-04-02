@@ -123,6 +123,17 @@ test "parse SGR scroll wheel down (button 65)" {
 	}
 }
 
+test "parse SGR mouse drag (button 32 = left+motion)" {
+	const event = input.parseEvent("\x1b[<32;25;15M");
+	switch (event) {
+		.mouse_drag => |pos| {
+			try testing.expectEqual(@as(u16, 24), pos.col);
+			try testing.expectEqual(@as(u16, 14), pos.row);
+		},
+		else => return error.TestUnexpectedResult,
+	}
+}
+
 test "unknown bytes parse as unknown" {
 	const event = input.parseEvent(&[_]u8{0xFF});
 	try testing.expectEqual(input.Event.unknown, event);

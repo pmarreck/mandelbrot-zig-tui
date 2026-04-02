@@ -57,14 +57,15 @@ pub fn exitRawMode() void {
 
 // ── Mouse tracking ──────────────────────────────────────────────────
 
-/// Enable X10 + SGR mouse tracking (press/release with column > 223).
+/// Enable button-event + SGR mouse tracking.
+/// 1002 = report press/release/motion-while-held. 1006 = SGR format (coords > 223).
 pub fn enableMouseTracking(writer: anytype) !void {
-	try writer.writeAll("\x1b[?1000h\x1b[?1006h");
+	try writer.writeAll("\x1b[?1002h\x1b[?1006h");
 }
 
-/// Disable SGR + X10 mouse tracking (reverse order of enable).
+/// Disable SGR + button-event mouse tracking (reverse order of enable).
 pub fn disableMouseTracking(writer: anytype) !void {
-	try writer.writeAll("\x1b[?1006l\x1b[?1000l");
+	try writer.writeAll("\x1b[?1006l\x1b[?1002l");
 }
 
 // ── Cursor ──────────────────────────────────────────────────────────

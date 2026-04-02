@@ -161,6 +161,27 @@ pub fn processEvent(state: AppState, event: input.Event) AppState {
 			}
 			s.drag_start = null;
 		},
+		.mouse_drag => |pos| {
+			// Live pan during drag: shift center by delta from last position
+			if (s.drag_start) |start| {
+				const start_pt = viewport.screenToComplex(.{
+					.col = start.col, .row = start.row,
+					.center_re = s.center_re, .center_im = s.center_im,
+					.zoom = s.zoom, .width = s.term_width, .height = s.term_height,
+					.aspect_ratio = ASPECT_RATIO,
+				});
+				const end_pt = viewport.screenToComplex(.{
+					.col = pos.col, .row = pos.row,
+					.center_re = s.center_re, .center_im = s.center_im,
+					.zoom = s.zoom, .width = s.term_width, .height = s.term_height,
+					.aspect_ratio = ASPECT_RATIO,
+				});
+				s.center_re += start_pt.re - end_pt.re;
+				s.center_im += start_pt.im - end_pt.im;
+				s.drag_start = pos; // Update start to current for next delta
+				s.needs_redraw = true;
+			}
+		},
 		.mouse_right_press => {},
 		.mouse_right_release => |pos| {
 			// Right-click release: zoom out at release position
