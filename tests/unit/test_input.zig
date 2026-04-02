@@ -57,10 +57,10 @@ test "parse arrow left escape sequence" {
 	try testing.expectEqual(input.Event.arrow_left, event);
 }
 
-test "parse SGR mouse left-click at col=40, row=12" {
+test "parse SGR mouse left press at col=40, row=12" {
 	const event = input.parseEvent("\x1b[<0;41;13M");
 	switch (event) {
-		.mouse_left => |pos| {
+		.mouse_left_press => |pos| {
 			try testing.expectEqual(@as(u16, 40), pos.col);
 			try testing.expectEqual(@as(u16, 12), pos.row);
 		},
@@ -68,10 +68,32 @@ test "parse SGR mouse left-click at col=40, row=12" {
 	}
 }
 
-test "parse SGR mouse right-click at col=10, row=5" {
+test "parse SGR mouse left release at col=40, row=12" {
+	const event = input.parseEvent("\x1b[<0;41;13m");
+	switch (event) {
+		.mouse_left_release => |pos| {
+			try testing.expectEqual(@as(u16, 40), pos.col);
+			try testing.expectEqual(@as(u16, 12), pos.row);
+		},
+		else => return error.TestUnexpectedResult,
+	}
+}
+
+test "parse SGR mouse right press at col=10, row=5" {
 	const event = input.parseEvent("\x1b[<2;11;6M");
 	switch (event) {
-		.mouse_right => |pos| {
+		.mouse_right_press => |pos| {
+			try testing.expectEqual(@as(u16, 10), pos.col);
+			try testing.expectEqual(@as(u16, 5), pos.row);
+		},
+		else => return error.TestUnexpectedResult,
+	}
+}
+
+test "parse SGR mouse right release at col=10, row=5" {
+	const event = input.parseEvent("\x1b[<2;11;6m");
+	switch (event) {
+		.mouse_right_release => |pos| {
 			try testing.expectEqual(@as(u16, 10), pos.col);
 			try testing.expectEqual(@as(u16, 5), pos.row);
 		},

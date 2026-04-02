@@ -20,8 +20,10 @@ pub const Event = union(enum) {
 	arrow_down,
 	arrow_left,
 	arrow_right,
-	mouse_left: MousePos,
-	mouse_right: MousePos,
+	mouse_left_press: MousePos,
+	mouse_left_release: MousePos,
+	mouse_right_press: MousePos,
+	mouse_right_release: MousePos,
 	scroll_up: MousePos,
 	scroll_down: MousePos,
 	ctrl_c,
@@ -68,18 +70,18 @@ pub fn parseEvent(bytes: []const u8) Event {
 }
 
 /// Parse the payload of an SGR mouse sequence (after "\x1b[<").
-/// Format: btn;col;row[Mm] where col/row are 1-based.
+/// Format: btn;col;row[Mm] where M=press, m=release. Col/row are 1-based.
 fn parseSgrMouse(bytes: []const u8) Event {
 	var parts: [3]u16 = .{ 0, 0, 0 };
 	var part_idx: usize = 0;
-	var terminated = false;
+	var terminator: u8 = 0;
 
 	for (bytes) |byte| {
 		if (byte == ';') {
 			part_idx += 1;
 			if (part_idx >= 3) return .unknown;
 		} else if (byte == 'M' or byte == 'm') {
-			terminated = true;
+			terminator = byte;
 			break;
 		} else if (byte >= '0' and byte <= '9') {
 			parts[part_idx] = parts[part_idx] *% 10 +% @as(u16, byte - '0');
@@ -88,16 +90,18 @@ fn parseSgrMouse(bytes: []const u8) Event {
 		}
 	}
 
-	if (!terminated or part_idx != 2) return .unknown;
+	if (terminator == 0 or part_idx != 2) return .unknown;
 
 	const button = parts[0];
 	const col = if (parts[1] > 0) parts[1] - 1 else 0;
 	const row = if (parts[2] > 0) parts[2] - 1 else 0;
+	const is_release = (terminator == 'm');
 
 	const pos = MousePos{ .col = col, .row = row };
 
 	// SGR button encoding: bits 0-1 = button (0=left, 1=middle, 2=right)
 	// bit 6 (64) = scroll wheel. 64=scroll up, 65=scroll down.
+	// Scroll wheel only fires press events (no release).
 	if (button >= 64) {
 		return switch (button) {
 			64 => .{ .scroll_up = pos },
@@ -106,8 +110,8 @@ fn parseSgrMouse(bytes: []const u8) Event {
 		};
 	}
 	return switch (button & 0x03) {
-		0 => .{ .mouse_left = pos },
-		2 => .{ .mouse_right = pos },
+		0 => if (is_release) .{ .mouse_left_release = pos } else .{ .mouse_left_press = pos },
+		2 => if (is_release) .{ .mouse_right_release = pos } else .{ .mouse_right_press = pos },
 		else => .unknown,
 	};
 }

@@ -22,6 +22,9 @@ pub const AppState = struct {
 	term_height: u16,
 	needs_redraw: bool,
 	running: bool,
+	/// Track mouse press position for drag detection.
+	/// null = no button currently held.
+	drag_start: ?input.MousePos = null,
 };
 
 pub fn defaultState() AppState {
@@ -120,27 +123,59 @@ pub fn processEvent(state: AppState, event: input.Event) AppState {
 			applyViewState(&s, new_view);
 			s.needs_redraw = true;
 		},
-		.mouse_left => |pos| {
-			const view = toViewState(s);
-			const new_view = viewport.zoomAt(view, ZOOM_FACTOR, pos.col, pos.row, s.term_width, s.term_height, ASPECT_RATIO);
-			applyViewState(&s, new_view);
-			s.needs_redraw = true;
+		.mouse_left_press => |pos| {
+			// Record press position for drag detection
+			s.drag_start = pos;
 		},
-		.mouse_right => |pos| {
+		.mouse_left_release => |pos| {
+			if (s.drag_start) |start| {
+				const dx = if (pos.col > start.col) pos.col - start.col else start.col - pos.col;
+				const dy = if (pos.row > start.row) pos.row - start.row else start.row - pos.row;
+				if (dx > 2 or dy > 1) {
+					// Drag: pan from start to release position
+					const view = toViewState(s);
+					const start_pt = viewport.screenToComplex(.{
+						.col = start.col, .row = start.row,
+						.center_re = s.center_re, .center_im = s.center_im,
+						.zoom = s.zoom, .width = s.term_width, .height = s.term_height,
+						.aspect_ratio = ASPECT_RATIO,
+					});
+					const end_pt = viewport.screenToComplex(.{
+						.col = pos.col, .row = pos.row,
+						.center_re = s.center_re, .center_im = s.center_im,
+						.zoom = s.zoom, .width = s.term_width, .height = s.term_height,
+						.aspect_ratio = ASPECT_RATIO,
+					});
+					_ = view;
+					// Pan = shift center by the delta (start - end, because dragging
+					// "grabs" the fractal and moves it)
+					s.center_re += start_pt.re - end_pt.re;
+					s.center_im += start_pt.im - end_pt.im;
+				} else {
+					// Click (no significant drag): zoom in at release position
+					const view = toViewState(s);
+					const new_view = viewport.zoomAt(view, ZOOM_FACTOR, pos.col, pos.row, s.term_width, s.term_height, ASPECT_RATIO);
+					applyViewState(&s, new_view);
+				}
+				s.needs_redraw = true;
+			}
+			s.drag_start = null;
+		},
+		.mouse_right_press => {},
+		.mouse_right_release => |pos| {
+			// Right-click release: zoom out at release position
 			const view = toViewState(s);
 			const new_view = viewport.zoomAt(view, 1.0 / ZOOM_FACTOR, pos.col, pos.row, s.term_width, s.term_height, ASPECT_RATIO);
 			applyViewState(&s, new_view);
 			s.needs_redraw = true;
 		},
 		.scroll_up => |pos| {
-			// Scroll up = zoom in at cursor position
 			const view = toViewState(s);
 			const new_view = viewport.zoomAt(view, ZOOM_FACTOR, pos.col, pos.row, s.term_width, s.term_height, ASPECT_RATIO);
 			applyViewState(&s, new_view);
 			s.needs_redraw = true;
 		},
 		.scroll_down => |pos| {
-			// Scroll down = zoom out at cursor position
 			const view = toViewState(s);
 			const new_view = viewport.zoomAt(view, 1.0 / ZOOM_FACTOR, pos.col, pos.row, s.term_width, s.term_height, ASPECT_RATIO);
 			applyViewState(&s, new_view);
@@ -286,11 +321,27 @@ test "processEvent: unknown does nothing" {
 	try std.testing.expect(s2.running);
 }
 
-test "processEvent: mouse_left zooms in at position" {
+test "processEvent: left click (press+release at same pos) zooms in" {
 	var s = defaultState();
 	const old_zoom = s.zoom;
-	s = processEvent(s, .{ .mouse_left = .{ .col = 10, .row = 5 } });
+	s = processEvent(s, .{ .mouse_left_press = .{ .col = 10, .row = 5 } });
+	try std.testing.expect(s.drag_start != null);
+	s = processEvent(s, .{ .mouse_left_release = .{ .col = 10, .row = 5 } });
 	try std.testing.expect(s.zoom > old_zoom);
+	try std.testing.expect(s.needs_redraw);
+	try std.testing.expect(s.drag_start == null);
+}
+
+test "processEvent: left drag pans without zooming" {
+	var s = defaultState();
+	const old_zoom = s.zoom;
+	const old_re = s.center_re;
+	s = processEvent(s, .{ .mouse_left_press = .{ .col = 10, .row = 5 } });
+	s = processEvent(s, .{ .mouse_left_release = .{ .col = 30, .row = 5 } });
+	// Zoom should not change
+	try std.testing.expectEqual(old_zoom, s.zoom);
+	// Center should have shifted
+	try std.testing.expect(s.center_re != old_re);
 	try std.testing.expect(s.needs_redraw);
 }
 
