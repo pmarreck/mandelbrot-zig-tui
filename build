@@ -2,13 +2,14 @@
 set -u
 
 case "${1:-}" in
-    --test|--debug)
+    debug|--debug)
         nix develop -c zig build -Doptimize=Debug
+        echo "Built (debug): zig-out/bin/mandelbrot"
         ;;
     *)
         nix build
         mkdir -p zig-out/bin
         cp -f result/bin/mandelbrot zig-out/bin/mandelbrot
-        echo "Built: zig-out/bin/mandelbrot"
+        echo "Built (ReleaseFast): zig-out/bin/mandelbrot"
         ;;
 esac
