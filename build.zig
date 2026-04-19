@@ -42,6 +42,13 @@ pub fn build(b: *std.Build) void {
             .{ .name = "coloring", .module = coloring_mod },
         },
     });
+    const pool_mod = b.createModule(.{
+        .root_source_file = b.path("src/tui/pool.zig"),
+        .imports = &.{
+            .{ .name = "cache", .module = cache_mod },
+            .{ .name = "mandelbrot", .module = mandelbrot_mod },
+        },
+    });
     const app_mod = b.createModule(.{
         .root_source_file = b.path("src/tui/app.zig"),
         .imports = &.{
@@ -49,6 +56,9 @@ pub fn build(b: *std.Build) void {
             .{ .name = "input", .module = input_mod },
             .{ .name = "renderer", .module = renderer_mod },
             .{ .name = "viewport", .module = viewport_mod },
+            .{ .name = "cache", .module = cache_mod },
+            .{ .name = "mandelbrot", .module = mandelbrot_mod },
+            .{ .name = "pool", .module = pool_mod },
         },
     });
 
@@ -182,6 +192,9 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "input", .module = input_mod },
                 .{ .name = "renderer", .module = renderer_mod },
                 .{ .name = "viewport", .module = viewport_mod },
+                .{ .name = "cache", .module = cache_mod },
+                .{ .name = "mandelbrot", .module = mandelbrot_mod },
+                .{ .name = "pool", .module = pool_mod },
             },
         }),
     });
