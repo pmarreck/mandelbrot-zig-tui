@@ -17,30 +17,19 @@ pub const RenderState = struct {
 
 const ASPECT_RATIO: f64 = 0.5;
 
-/// Render a complete frame as an ANSI-escaped byte buffer.
-/// Uses 24-bit true-color (\x1b[38;2;R;G;Bm) for smooth gradients.
+/// Render from a pre-computed iteration buffer.
+/// iter_buf must have length >= width * render_height (where render_height accounts
+/// for the info bar if enabled). The buffer is row-major.
 /// Caller owns the returned memory.
-pub fn renderFrame(
+pub fn renderFrameFromBuffer(
     state: RenderState,
     width: u16,
     height: u16,
+    iter_buf: []const f64,
     allocator: std.mem.Allocator,
 ) ![]u8 {
     const render_height: u16 = if (state.show_info and height > 1) height - 1 else height;
     const pixel_count: usize = @as(usize, width) * @as(usize, render_height);
-
-    const iter_buf = try allocator.alloc(f64, pixel_count);
-    defer allocator.free(iter_buf);
-
-    mandelbrot.computeRegion(.{
-        .center_re = state.center_re,
-        .center_im = state.center_im,
-        .zoom = state.zoom,
-        .width = width,
-        .height = render_height,
-        .max_iter = state.max_iter,
-        .aspect_ratio = ASPECT_RATIO,
-    }, iter_buf);
 
     var output: std.ArrayListUnmanaged(u8) = .{};
 
@@ -114,4 +103,33 @@ pub fn renderFrame(
     }
 
     return try output.toOwnedSlice(allocator);
+}
+
+/// Render a complete frame as an ANSI-escaped byte buffer.
+/// Convenience wrapper: computes the iteration buffer internally, then calls
+/// renderFrameFromBuffer. Uses 24-bit true-color (\x1b[38;2;R;G;Bm) for smooth gradients.
+/// Caller owns the returned memory.
+pub fn renderFrame(
+    state: RenderState,
+    width: u16,
+    height: u16,
+    allocator: std.mem.Allocator,
+) ![]u8 {
+    const render_height: u16 = if (state.show_info and height > 1) height - 1 else height;
+    const pixel_count: usize = @as(usize, width) * @as(usize, render_height);
+
+    const iter_buf = try allocator.alloc(f64, pixel_count);
+    defer allocator.free(iter_buf);
+
+    mandelbrot.computeRegion(.{
+        .center_re = state.center_re,
+        .center_im = state.center_im,
+        .zoom = state.zoom,
+        .width = width,
+        .height = render_height,
+        .max_iter = state.max_iter,
+        .aspect_ratio = ASPECT_RATIO,
+    }, iter_buf);
+
+    return renderFrameFromBuffer(state, width, height, iter_buf, allocator);
 }

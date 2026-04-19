@@ -175,6 +175,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "renderer", .module = renderer_mod },
+                .{ .name = "mandelbrot", .module = mandelbrot_mod },
             },
         }),
     });
