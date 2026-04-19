@@ -49,9 +49,10 @@ pub const RegionParams = struct {
 };
 
 /// Compute smooth escape iterations for a rectangular grid of the complex plane.
+/// Uses vertex semantics (grid points at origin + col*step) to match the cache
+/// module's pointAt, so cache-populated buffers and freshly-computed buffers are bit-identical.
 /// Output buffer must have length >= width * height. Fills in row-major order.
 /// Interior points are stored as INTERIOR (-1.0).
-/// Designed for future parallelization: sub-regions can be computed independently.
 pub fn computeRegion(params: RegionParams, out: []f64) void {
 	const w: f128 = @floatFromInt(params.width);
 	const h: f128 = @floatFromInt(params.height);
@@ -70,8 +71,8 @@ pub fn computeRegion(params: RegionParams, out: []f64) void {
 	while (row < params.height) : (row += 1) {
 		var col: u16 = 0;
 		while (col < params.width) : (col += 1) {
-			const c_re = start_re + @as(f128, @floatFromInt(col)) * step_re + step_re / 2.0;
-			const c_im = start_im + @as(f128, @floatFromInt(row)) * step_im + step_im / 2.0;
+			const c_re = start_re + @as(f128, @floatFromInt(col)) * step_re;
+			const c_im = start_im + @as(f128, @floatFromInt(row)) * step_im;
 			const idx = @as(usize, row) * @as(usize, params.width) + @as(usize, col);
 			out[idx] = computeIterations(c_re, c_im, params.max_iter);
 		}
@@ -102,8 +103,8 @@ pub fn computeRowBand(params: RegionParams, out: []f64, start_row: u16, end_row:
 	while (row < end_row) : (row += 1) {
 		var col: u16 = 0;
 		while (col < params.width) : (col += 1) {
-			const c_re = start_re + @as(f128, @floatFromInt(col)) * step_re + step_re / 2.0;
-			const c_im = start_im + @as(f128, @floatFromInt(row)) * step_im + step_im / 2.0;
+			const c_re = start_re + @as(f128, @floatFromInt(col)) * step_re;
+			const c_im = start_im + @as(f128, @floatFromInt(row)) * step_im;
 			const idx = @as(usize, row) * @as(usize, params.width) + @as(usize, col);
 			out[idx] = computeIterations(c_re, c_im, params.max_iter);
 		}

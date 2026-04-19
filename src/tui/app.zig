@@ -7,6 +7,9 @@ const terminal = @import("terminal");
 const input = @import("input");
 const renderer = @import("renderer");
 const viewport = @import("viewport");
+const cache_mod = @import("cache");
+const mandelbrot = @import("mandelbrot");
+const pool = @import("pool");
 
 const ZOOM_FACTOR: f128 = 2.0;
 const ASPECT_RATIO: f64 = 0.5;
@@ -48,6 +51,15 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 	var state = initial_state;
 	state.needs_redraw = true;
 
+	// Cache + scheduler owned by the event loop.
+	// cache_stack holds up to 5 pre-rendered resolution levels; scheduler
+	// drives background pre-computation of levels 1-4 after each render.
+	var cache_stack = cache_mod.CacheStack.init();
+	defer cache_stack.deinit(allocator);
+
+	var scheduler = pool.BackgroundScheduler.init(allocator, &cache_stack);
+	defer scheduler.stop();
+
 	const stdout_file = std.fs.File.stdout();
 	const stdin_file = std.fs.File.stdin();
 
@@ -73,29 +85,102 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 				state.term_width = size.cols;
 				state.term_height = size.rows;
 				state.needs_redraw = true;
+				// Terminal size changed — cache is invalid
+				scheduler.cancel();
+				cache_stack.invalidateAll(allocator);
 			} else |_| {}
 		}
 
 		if (state.needs_redraw) {
-			const frame = try renderer.renderFrame(.{
+			const render_height: u16 = if (state.show_info and state.term_height > 1)
+				state.term_height - 1
+			else
+				state.term_height;
+			const pixel_count = @as(usize, state.term_width) * @as(usize, render_height);
+
+			const iter_buf = try allocator.alloc(f64, pixel_count);
+			defer allocator.free(iter_buf);
+
+			// Check cache Level 0 first (fast path: avoids recomputation when
+			// the viewport matches a completed cache level, e.g. after a redraw
+			// toggle that didn't change geometry).
+			var cache_hit = false;
+			if (cache_stack.levels[0]) |level| {
+				if (level.complete and level.width == state.term_width and level.height == render_height) {
+					@memcpy(iter_buf, level.data[0..pixel_count]);
+					cache_hit = true;
+				}
+			}
+
+			if (!cache_hit) {
+				// Stop scheduler before mutating cache to avoid data race
+				// with the coordinator thread. cancel() bumps generation;
+				// invalidateAll frees all levels.
+				scheduler.cancel();
+				cache_stack.invalidateAll(allocator);
+
+				// Allocate Level 0 to match the current viewport.
+				try cache_stack.initForViewport(
+					allocator,
+					state.center_re,
+					state.center_im,
+					state.zoom,
+					state.term_width,
+					render_height,
+					state.max_iter,
+					ASPECT_RATIO,
+				);
+
+				// Parallel compute into iter_buf (vertex semantics — matches
+				// cache.pointAt so the buffer is bit-identical to a cache fill).
+				try mandelbrot.parallelComputeRegion(.{
+					.center_re = state.center_re,
+					.center_im = state.center_im,
+					.zoom = state.zoom,
+					.width = state.term_width,
+					.height = render_height,
+					.max_iter = state.max_iter,
+					.aspect_ratio = ASPECT_RATIO,
+				}, iter_buf);
+
+				// Copy into cache Level 0 and mark complete so the scheduler
+				// can start doubling into Level 1.
+				if (cache_stack.levels[0]) |*level| {
+					@memcpy(level.data, iter_buf);
+					level.complete = true;
+				}
+			}
+
+			const frame = try renderer.renderFrameFromBuffer(.{
 				.center_re = state.center_re,
 				.center_im = state.center_im,
 				.zoom = state.zoom,
 				.max_iter = state.max_iter,
 				.show_info = state.show_info,
-			}, state.term_width, state.term_height, allocator);
+			}, state.term_width, state.term_height, iter_buf, allocator);
 			defer allocator.free(frame);
 
 			try stdout.writeAll(frame);
 			try stdout.flush();
 			state.needs_redraw = false;
+
+			// Kick background pre-computation (levels 1-4).
+			scheduler.requestWork();
 		}
 
 		const n = stdin_file.read(&read_buf) catch 0;
 		if (n == 0) continue;
 
 		const event = input.parseEvent(read_buf[0..n]);
-		state = processEvent(state, event);
+		const new_state = processEvent(state, event);
+
+		// If the viewport changed, the cache is stale: cancel scheduler and
+		// invalidate all levels. The next render pass will refill Level 0.
+		if (viewportChanged(state, new_state)) {
+			scheduler.cancel();
+			cache_stack.invalidateAll(allocator);
+		}
+		state = new_state;
 	}
 
 	try terminal.disableMouseTracking(stdout);
@@ -103,6 +188,19 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 	try terminal.clearScreen(stdout);
 	try stdout.flush();
 	terminal.exitRawMode();
+}
+
+/// Returns true if any viewport-defining field differs between two AppStates.
+/// Used by the event loop to decide when to invalidate the cache: cache layout
+/// depends on center/zoom/max_iter/term_width/term_height — any change to
+/// these fields makes the existing cache stale.
+fn viewportChanged(old: AppState, new: AppState) bool {
+	return old.center_re != new.center_re or
+		old.center_im != new.center_im or
+		old.zoom != new.zoom or
+		old.max_iter != new.max_iter or
+		old.term_width != new.term_width or
+		old.term_height != new.term_height;
 }
 
 /// Pure state transition function -- given current state and an event, returns new state.
