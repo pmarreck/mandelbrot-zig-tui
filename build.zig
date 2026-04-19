@@ -14,6 +14,9 @@ pub fn build(b: *std.Build) void {
     const mandelbrot_mod = b.createModule(.{
         .root_source_file = b.path("src/core/mandelbrot.zig"),
     });
+    const cache_mod = b.createModule(.{
+        .root_source_file = b.path("src/core/cache.zig"),
+    });
     const coloring_mod = b.createModule(.{
         .root_source_file = b.path("src/core/coloring.zig"),
         .imports = &.{
@@ -181,4 +184,18 @@ pub fn build(b: *std.Build) void {
     });
     const run_app_tests = b.addRunArtifact(app_tests);
     test_step.dependOn(&run_app_tests.step);
+
+    // core/cache tests
+    const cache_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/test_cache.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "cache", .module = cache_mod },
+            },
+        }),
+    });
+    const run_cache_tests = b.addRunArtifact(cache_tests);
+    test_step.dependOn(&run_cache_tests.step);
 }
