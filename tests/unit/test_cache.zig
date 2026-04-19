@@ -130,3 +130,131 @@ test "CacheLevel sampleStride extracts points at regular intervals" {
     // out[5] should be level.get(2, 2) = 22
     try testing.expectEqual(@as(f64, 22), out[5]);
 }
+
+test "CacheStack init creates empty stack" {
+    const stack = cache.CacheStack.init();
+    for (stack.levels) |level| {
+        try testing.expect(level == null);
+    }
+}
+
+test "CacheStack initForViewport creates Level 0" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var stack = cache.CacheStack.init();
+    defer stack.deinit(allocator);
+
+    try stack.initForViewport(allocator, -0.5, 0.0, 1.0, 80, 24, 256, 0.5);
+
+    try testing.expect(stack.levels[0] != null);
+    try testing.expectEqual(@as(u32, 80), stack.levels[0].?.width);
+    try testing.expectEqual(@as(u32, 24), stack.levels[0].?.height);
+    // Other levels should be null initially
+    try testing.expect(stack.levels[1] == null);
+}
+
+test "CacheStack createLevel creates a 2x level with parent bounds" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var stack = cache.CacheStack.init();
+    defer stack.deinit(allocator);
+
+    try stack.initForViewport(allocator, -0.5, 0.0, 1.0, 10, 10, 256, 0.5);
+    try stack.createLevel(allocator, 1);
+
+    try testing.expect(stack.levels[1] != null);
+    // Level 1 should be 2x the dimensions of Level 0
+    try testing.expectEqual(@as(u32, 20), stack.levels[1].?.width);
+    try testing.expectEqual(@as(u32, 20), stack.levels[1].?.height);
+    // Level 1 origin should match Level 0 origin
+    try testing.expectEqual(stack.levels[0].?.origin_re, stack.levels[1].?.origin_re);
+    // Level 1 step should be half of Level 0
+    try testing.expectEqual(stack.levels[0].?.step_re / 2.0, stack.levels[1].?.step_re);
+}
+
+test "CacheStack shiftOnZoomIn rotates levels down" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var stack = cache.CacheStack.init();
+    defer stack.deinit(allocator);
+
+    // Create levels 0-3
+    try stack.initForViewport(allocator, -0.5, 0.0, 1.0, 10, 10, 256, 0.5);
+    try stack.createLevel(allocator, 1); // 2x (20x20)
+    try stack.createLevel(allocator, 2); // 4x (40x40)
+    try stack.createLevel(allocator, 3); // 8x (80x80)
+
+    // Mark level 1 as having specific data
+    stack.levels[1].?.set(0, 0, 99.0);
+    stack.levels[1].?.complete = true;
+
+    stack.shiftOnZoomIn(allocator);
+
+    // Old level 1 should now be level 0
+    try testing.expect(stack.levels[0] != null);
+    try testing.expectEqual(@as(f64, 99.0), stack.levels[0].?.get(0, 0));
+    try testing.expectEqual(@as(u32, 20), stack.levels[0].?.width);
+    // Level 4 should be null (needs computation)
+    try testing.expect(stack.levels[4] == null);
+}
+
+test "CacheStack invalidateAll clears everything" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var stack = cache.CacheStack.init();
+    defer stack.deinit(allocator);
+
+    try stack.initForViewport(allocator, -0.5, 0.0, 1.0, 10, 10, 256, 0.5);
+    try stack.createLevel(allocator, 1);
+
+    stack.invalidateAll(allocator);
+
+    for (stack.levels) |level| {
+        try testing.expect(level == null);
+    }
+}
+
+test "CacheStack nextIncompleteLevel finds first gap" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var stack = cache.CacheStack.init();
+    defer stack.deinit(allocator);
+
+    try stack.initForViewport(allocator, -0.5, 0.0, 1.0, 10, 10, 256, 0.5);
+    stack.levels[0].?.complete = true;
+
+    // Level 1 doesn't exist yet — should be the next to compute
+    try testing.expectEqual(@as(?u8, 1), stack.nextIncompleteLevel());
+}
+
+test "CacheStack nextIncompleteLevel returns null when all complete" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var stack = cache.CacheStack.init();
+    defer stack.deinit(allocator);
+
+    try stack.initForViewport(allocator, -0.5, 0.0, 1.0, 10, 10, 256, 0.5);
+    try stack.createLevel(allocator, 1);
+    try stack.createLevel(allocator, 2);
+    try stack.createLevel(allocator, 3);
+    try stack.createLevel(allocator, 4);
+
+    // Mark all complete
+    for (&stack.levels) |*level| {
+        if (level.*) |*l| l.complete = true;
+    }
+
+    try testing.expectEqual(@as(?u8, null), stack.nextIncompleteLevel());
+}
