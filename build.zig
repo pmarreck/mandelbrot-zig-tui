@@ -11,11 +11,14 @@ pub fn build(b: *std.Build) void {
     // ── Shared module definitions ───────────────────────────────────
     // These are reused by both the main executable and test targets.
 
-    const mandelbrot_mod = b.createModule(.{
-        .root_source_file = b.path("src/core/mandelbrot.zig"),
-    });
     const cache_mod = b.createModule(.{
         .root_source_file = b.path("src/core/cache.zig"),
+    });
+    const mandelbrot_mod = b.createModule(.{
+        .root_source_file = b.path("src/core/mandelbrot.zig"),
+        .imports = &.{
+            .{ .name = "cache", .module = cache_mod },
+        },
     });
     const coloring_mod = b.createModule(.{
         .root_source_file = b.path("src/core/coloring.zig"),
@@ -207,6 +210,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "mandelbrot", .module = mandelbrot_mod },
+                .{ .name = "cache", .module = cache_mod },
             },
         }),
     });

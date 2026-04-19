@@ -132,3 +132,98 @@ pub fn parallelComputeRegion(params: RegionParams, out: []f64) !void {
 	}
 	for (&threads) |*t| t.join();
 }
+
+const cache_mod = @import("cache");
+
+/// Fill a CacheLevel's data buffer using its own grid coordinates.
+/// Convenience wrapper over computeIterations for cache levels.
+/// Sets level.complete = true on return.
+pub fn computeRegionDirect(level: *cache_mod.CacheLevel) void {
+	var row: u32 = 0;
+	while (row < level.height) : (row += 1) {
+		var col: u32 = 0;
+		while (col < level.width) : (col += 1) {
+			const pt = level.pointAt(col, row);
+			level.set(col, row, computeIterations(pt.re, pt.im, level.max_iter));
+		}
+	}
+	level.complete = true;
+}
+
+/// Arguments for the offset worker thread.
+const OffsetWorkerArgs = struct {
+	child: *cache_mod.CacheLevel,
+	col_start: u32, // 0 or 1
+	row_start: u32, // 0 or 1
+	gen: ?*const std.atomic.Value(u32),
+	expected: u32,
+};
+
+/// Worker function: fills one of the 3 offset patterns.
+/// Each thread writes to rows starting at row_start with stride 2,
+/// columns starting at col_start with stride 2.
+fn offsetWorker(args: OffsetWorkerArgs) void {
+	var row: u32 = args.row_start;
+	while (row < args.child.height) : (row += 2) {
+		// Check cancellation every row
+		if (args.gen) |g| {
+			if (g.load(.acquire) != args.expected) return;
+		}
+		var col: u32 = args.col_start;
+		while (col < args.child.width) : (col += 2) {
+			const pt = args.child.pointAt(col, row);
+			args.child.set(col, row, computeIterations(pt.re, pt.im, args.child.max_iter));
+		}
+	}
+}
+
+/// Compute the 3 offset patterns to double resolution from parent to child.
+/// Child must be 2x parent dimensions with even-indexed points already inherited
+/// via `child.inheritFromParent(parent)`.
+/// Spawns 3 threads (odd-col/even-row, even-col/odd-row, odd-col/odd-row).
+/// If generation is non-null, threads check it per-row for cancellation.
+/// Sets child.complete = true only if computation was not cancelled.
+pub fn computeDoubling(
+	parent: *const cache_mod.CacheLevel,
+	child: *cache_mod.CacheLevel,
+	generation: ?*const std.atomic.Value(u32),
+) !void {
+	_ = parent; // Parent data already inherited into child's even-even slots
+
+	const expected_gen: u32 = if (generation) |g| g.load(.acquire) else 0;
+
+	var threads: [3]std.Thread = undefined;
+	// Thread 1: odd col, even row
+	threads[0] = try std.Thread.spawn(.{}, offsetWorker, .{OffsetWorkerArgs{
+		.child = child,
+		.col_start = 1,
+		.row_start = 0,
+		.gen = generation,
+		.expected = expected_gen,
+	}});
+	// Thread 2: even col, odd row
+	threads[1] = try std.Thread.spawn(.{}, offsetWorker, .{OffsetWorkerArgs{
+		.child = child,
+		.col_start = 0,
+		.row_start = 1,
+		.gen = generation,
+		.expected = expected_gen,
+	}});
+	// Thread 3: odd col, odd row
+	threads[2] = try std.Thread.spawn(.{}, offsetWorker, .{OffsetWorkerArgs{
+		.child = child,
+		.col_start = 1,
+		.row_start = 1,
+		.gen = generation,
+		.expected = expected_gen,
+	}});
+
+	for (&threads) |*t| t.join();
+
+	// Check if computation completed (wasn't cancelled)
+	if (generation) |g| {
+		child.complete = (g.load(.acquire) == expected_gen);
+	} else {
+		child.complete = true;
+	}
+}

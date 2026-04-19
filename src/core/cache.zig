@@ -52,11 +52,15 @@ pub const CacheLevel = struct {
         self.data = &.{};
     }
 
-    /// Get the complex-plane coordinate for a grid cell (pixel center).
+    /// Get the complex-plane coordinate for a grid cell (grid-vertex model).
+    /// Uses vertex semantics (no half-step offset) so that doubling inheritance
+    /// works: child(col*2, row*2) = parent(col, row) when child.step = parent.step / 2
+    /// and both share the same origin. This matches the progressive-prerender spec's
+    /// requirement that "Points at even indices in Level N+1 are identical to Level N".
     pub fn pointAt(self: CacheLevel, col: u32, row: u32) ComplexPoint {
         return .{
-            .re = self.origin_re + @as(f128, @floatFromInt(col)) * self.step_re + self.step_re / 2.0,
-            .im = self.origin_im + @as(f128, @floatFromInt(row)) * self.step_im + self.step_im / 2.0,
+            .re = self.origin_re + @as(f128, @floatFromInt(col)) * self.step_re,
+            .im = self.origin_im + @as(f128, @floatFromInt(row)) * self.step_im,
         };
     }
 
@@ -110,6 +114,19 @@ pub const CacheLevel = struct {
                 const src_row = start_row + r * stride;
                 const out_idx = @as(usize, r) * @as(usize, out_width) + @as(usize, c);
                 out[out_idx] = self.get(src_col, src_row);
+            }
+        }
+    }
+
+    /// Copy data from parent level into even-indexed positions of this level.
+    /// Parent at WxH, self at 2Wx2H. parent[col,row] → self[col*2, row*2].
+    /// Used by the 2x doubling step before computing the 3 offset patterns.
+    pub fn inheritFromParent(self: *CacheLevel, parent: CacheLevel) void {
+        var row: u32 = 0;
+        while (row < parent.height) : (row += 1) {
+            var col: u32 = 0;
+            while (col < parent.width) : (col += 1) {
+                self.set(col * 2, row * 2, parent.get(col, row));
             }
         }
     }

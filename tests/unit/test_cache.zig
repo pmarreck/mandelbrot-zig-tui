@@ -40,14 +40,14 @@ test "CacheLevel pointAt returns correct complex coordinate" {
     });
     defer level.deinit(allocator);
 
-    // Point at (0, 0) should be at origin + half step (pixel center)
+    // Point at (0, 0) should be at origin (grid-vertex model)
     const p = level.pointAt(0, 0);
-    try testing.expectApproxEqAbs(@as(f64, -1.95), @as(f64, @floatCast(p.re)), 0.001);
-    try testing.expectApproxEqAbs(@as(f64, -0.95), @as(f64, @floatCast(p.im)), 0.001);
+    try testing.expectApproxEqAbs(@as(f64, -2.0), @as(f64, @floatCast(p.re)), 0.001);
+    try testing.expectApproxEqAbs(@as(f64, -1.0), @as(f64, @floatCast(p.im)), 0.001);
 
     // Point at (1, 0) should be one step_re to the right
     const p2 = level.pointAt(1, 0);
-    try testing.expectApproxEqAbs(@as(f64, -1.85), @as(f64, @floatCast(p2.re)), 0.001);
+    try testing.expectApproxEqAbs(@as(f64, -1.9), @as(f64, @floatCast(p2.re)), 0.001);
 }
 
 test "CacheLevel get/set data by grid coords" {
