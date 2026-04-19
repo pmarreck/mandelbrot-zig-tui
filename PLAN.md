@@ -10,15 +10,23 @@
 - [x] TUI renderer (pure state → ANSI buffer) — ~2026-04-01 16:15 EST
 - [x] TUI app event loop + main entry point — ~2026-04-01 16:30 EST
 - [x] CLI test suite — ~2026-04-01 16:40 EST
-- [x] Documentation & cleanup — ~2026-04-01 16:45 EST
+- [x] Progressive pre-rendering: CacheLevel + CacheStack — ~2026-04-19 18:00 EST
+- [x] Parallel computeRegion (3-thread row-band split) — ~2026-04-19 18:15 EST
+- [x] 3-offset doubling algorithm with generation-counter cancellation — ~2026-04-19 18:30 EST
+- [x] BackgroundScheduler (coordinator + pre-computation of levels 1-4) — ~2026-04-19 18:40 EST
+- [x] renderFrameFromBuffer (decoupled compute from render) — ~2026-04-19 18:45 EST
+- [x] Cache-aware event loop integration — ~2026-04-19 18:55 EST
+- [x] Benchmark suite (./bm) — ~2026-04-19 19:05 EST
 
 ## Future Enhancements
-- [ ] Multithreaded computation (thread pool, row-band splitting)
+- [ ] **Improve parallel speedup** — currently 1.55x for 3 threads due to load imbalance (middle row-band hits interior points every pixel). Switch to interleaved/striped row assignment.
+- [ ] **Shift-on-zoom-in optimization** — use pre-computed Level 1 as new Level 0 after zoom-at-point (currently invalidates cache). Requires sub-region extraction via `sampleStride`.
+- [ ] **Pan shift-and-fill** — keep overlapping cached data on pan, only compute newly-exposed edges.
+- [ ] **Benchmark regression detection** — `bm` currently only appends. Add % comparison against most recent run, fail on >10% regression.
 - [ ] Arbitrary precision (bignum) for unlimited zoom depth
 - [ ] C FFI surface exposing core functions
 - [ ] "i" info bar shows command to restore exact view (regardless of terminal size)
 - [ ] Additional fractal types (Julia sets, Burning Ship)
 - [ ] --lang / i18n support per CLI guidelines
 - [ ] Cross-platform builds (5 OS/arch targets via build_all)
-- [ ] Benchmark suite (./bm)
 - [ ] --no-color / --no-ansi / --simple modes (wired up but need testing)
