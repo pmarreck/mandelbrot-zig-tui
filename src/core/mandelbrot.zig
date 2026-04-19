@@ -77,3 +77,58 @@ pub fn computeRegion(params: RegionParams, out: []f64) void {
 		}
 	}
 }
+
+/// Number of worker threads for parallel computation.
+const NUM_THREADS: u32 = 3;
+
+/// Compute a contiguous band of rows (from start_row to end_row exclusive).
+/// Same math as computeRegion but only fills the specified row range.
+/// Thread-safe: no shared mutable state, each thread writes to disjoint rows.
+pub fn computeRowBand(params: RegionParams, out: []f64, start_row: u16, end_row: u16) void {
+	const w: f128 = @floatFromInt(params.width);
+	const h: f128 = @floatFromInt(params.height);
+	const aspect: f128 = @floatCast(params.aspect_ratio);
+
+	const range_re = 4.0 / params.zoom;
+	const range_im = range_re * (h / w) / aspect;
+
+	const step_re = range_re / w;
+	const step_im = range_im / h;
+
+	const start_re = params.center_re - range_re / 2.0;
+	const start_im = params.center_im - range_im / 2.0;
+
+	var row = start_row;
+	while (row < end_row) : (row += 1) {
+		var col: u16 = 0;
+		while (col < params.width) : (col += 1) {
+			const c_re = start_re + @as(f128, @floatFromInt(col)) * step_re + step_re / 2.0;
+			const c_im = start_im + @as(f128, @floatFromInt(row)) * step_im + step_im / 2.0;
+			const idx = @as(usize, row) * @as(usize, params.width) + @as(usize, col);
+			out[idx] = computeIterations(c_re, c_im, params.max_iter);
+		}
+	}
+}
+
+/// Parallel version of computeRegion: splits rows across 3 threads.
+/// Output is identical to sequential computeRegion (floating-point ops are
+/// deterministic given the same inputs and each pixel is independent).
+/// Falls back to sequential for very small heights (< NUM_THREADS rows).
+pub fn parallelComputeRegion(params: RegionParams, out: []f64) !void {
+	const height = params.height;
+	if (height < NUM_THREADS) {
+		// Too few rows for threading — fall back to sequential
+		computeRegion(params, out);
+		return;
+	}
+
+	const rows_per_thread = height / NUM_THREADS;
+	var threads: [NUM_THREADS]std.Thread = undefined;
+	var i: u32 = 0;
+	while (i < NUM_THREADS) : (i += 1) {
+		const start_row: u16 = @intCast(i * rows_per_thread);
+		const end_row: u16 = if (i == NUM_THREADS - 1) height else @intCast((i + 1) * rows_per_thread);
+		threads[i] = try std.Thread.spawn(.{}, computeRowBand, .{ params, out, start_row, end_row });
+	}
+	for (&threads) |*t| t.join();
+}

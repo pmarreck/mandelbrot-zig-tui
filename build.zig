@@ -198,4 +198,18 @@ pub fn build(b: *std.Build) void {
     });
     const run_cache_tests = b.addRunArtifact(cache_tests);
     test_step.dependOn(&run_cache_tests.step);
+
+    // parallel compute tests
+    const parallel_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/test_parallel.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "mandelbrot", .module = mandelbrot_mod },
+            },
+        }),
+    });
+    const run_parallel_tests = b.addRunArtifact(parallel_tests);
+    test_step.dependOn(&run_parallel_tests.step);
 }
