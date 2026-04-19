@@ -230,4 +230,22 @@ pub fn build(b: *std.Build) void {
     });
     const run_parallel_tests = b.addRunArtifact(parallel_tests);
     test_step.dependOn(&run_parallel_tests.step);
+
+    // Benchmarks (always ReleaseFast, per CLAUDE.md rule that benchmarks
+    // must never run in Debug mode).
+    const bench_exe = b.addExecutable(.{
+        .name = "bench-render",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/benchmark/bench_render.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "mandelbrot", .module = mandelbrot_mod },
+            },
+        }),
+    });
+    b.installArtifact(bench_exe);
+    const bench_step = b.step("bench", "Run benchmarks (ReleaseFast)");
+    const run_bench = b.addRunArtifact(bench_exe);
+    bench_step.dependOn(&run_bench.step);
 }

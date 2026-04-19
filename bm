@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# Create benchmarks log directory
+mkdir -p benchmarks
+
+LOGFILE="benchmarks/results.log"
+
+echo "=== Benchmark run: $(date '+%Y-%m-%d %H:%M:%S %Z') ===" | tee -a "$LOGFILE"
+echo "Git: $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)" | tee -a "$LOGFILE"
+echo "" | tee -a "$LOGFILE"
+
+# Build + run in release mode. The benchmark asserts non-Debug internally.
+nix develop -c zig build bench 2>&1 | tee -a "$LOGFILE"

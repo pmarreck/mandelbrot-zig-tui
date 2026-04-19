@@ -1,0 +1,9 @@
+=== Benchmark run: 2026-04-19 18:49:00 EDT ===
+Git: a9591a2 on yolo
+
+
+=== Mandelbrot Render Benchmark (200x60, iter=256, N=20) ===
+  Sequential:  41.12 ms/frame
+  Parallel:    26.61 ms/frame
+  Speedup:     1.55x
+
