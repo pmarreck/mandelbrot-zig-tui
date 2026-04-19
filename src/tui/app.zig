@@ -85,8 +85,10 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 				state.term_width = size.cols;
 				state.term_height = size.rows;
 				state.needs_redraw = true;
-				// Terminal size changed — cache is invalid
-				scheduler.cancel();
+				// Terminal size changed — cache is invalid.
+				// stop() bumps generation and joins the coordinator to prevent
+				// a data race with invalidateAll (cancel() alone would not).
+				scheduler.stop();
 				cache_stack.invalidateAll(allocator);
 			} else |_| {}
 		}
@@ -113,10 +115,10 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 			}
 
 			if (!cache_hit) {
-				// Stop scheduler before mutating cache to avoid data race
-				// with the coordinator thread. cancel() bumps generation;
-				// invalidateAll frees all levels.
-				scheduler.cancel();
+				// Stop scheduler and join before mutating cache — prevents
+				// a data race where the coordinator reads cache.levels while
+				// the main thread frees them. requestWork() later respawns.
+				scheduler.stop();
 				cache_stack.invalidateAll(allocator);
 
 				// Allocate Level 0 to match the current viewport.
@@ -174,10 +176,11 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 		const event = input.parseEvent(read_buf[0..n]);
 		const new_state = processEvent(state, event);
 
-		// If the viewport changed, the cache is stale: cancel scheduler and
-		// invalidate all levels. The next render pass will refill Level 0.
+		// If the viewport changed, the cache is stale. stop() joins the
+		// coordinator before we invalidate levels, avoiding a use-after-free
+		// race. The next render pass refills Level 0 and respawns via requestWork.
 		if (viewportChanged(state, new_state)) {
-			scheduler.cancel();
+			scheduler.stop();
 			cache_stack.invalidateAll(allocator);
 		}
 		state = new_state;
