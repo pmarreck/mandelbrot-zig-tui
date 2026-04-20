@@ -4,6 +4,7 @@ const terminal = @import("terminal");
 const viewport = @import("viewport");
 const renderer = @import("renderer");
 const mandelbrot = @import("mandelbrot");
+const coloring = @import("coloring");
 
 const version = "0.1.0";
 
@@ -27,6 +28,7 @@ pub fn main() !void {
 	var single_frame = false;
 	var bench_zoom_n: ?u32 = null;
 	var bench_quiet = false;
+	var cli_glyph_mode: ?coloring.GlyphMode = null;
 
 	var i: usize = 1;
 	while (i < args.len) : (i += 1) {
@@ -46,6 +48,7 @@ pub fn main() !void {
 				\\  --single-frame             Render one frame to stdout and exit
 				\\  --bench-zoom-sequence N    Render N zoom-in frames for perf testing, print timing, exit
 				\\  --bench-quiet              With --bench-zoom-sequence: suppress per-frame output
+				\\  --glyph=MODE               Initial glyph mode: density (default) or blocks
 				\\  --no-color                 Disable ANSI colors
 				\\  --no-ansi                  Disable all ANSI escapes
 				\\  --simple                   Plain ASCII mode (no color, ANSI, or emoji)
@@ -57,6 +60,7 @@ pub fn main() !void {
 				\\  MANDELBROT_MAX_ITER    Max iteration count
 				\\  MANDELBROT_COLS        Override terminal width
 				\\  MANDELBROT_ROWS        Override terminal height
+				\\  MANDELBROT_SUBBLOCK    Set to true/1/yes/on to start in blocks mode
 				\\
 				\\Controls:
 				\\  Left-click     Zoom in 2x at click point
@@ -66,6 +70,7 @@ pub fn main() !void {
 				\\  Arrow keys     Pan
 				\\  [/]            Decrease/increase max iterations
 				\\  i              Toggle info bar
+				\\  g              Cycle glyph mode (density, blocks)
 				\\  q / Ctrl-C     Quit
 				\\
 			, .{});
@@ -106,6 +111,19 @@ pub fn main() !void {
 			bench_quiet = true;
 			continue;
 		}
+		if (std.mem.startsWith(u8, arg, "--glyph=")) {
+			const mode_str = arg["--glyph=".len..];
+			if (std.mem.eql(u8, mode_str, "density")) {
+				cli_glyph_mode = .density;
+			} else if (std.mem.eql(u8, mode_str, "blocks")) {
+				cli_glyph_mode = .blocks;
+			} else {
+				try stderr.writeAll("--glyph= must be 'density' or 'blocks'\n");
+				try stderr.flush();
+				return error.BadCliArg;
+			}
+			continue;
+		}
 	}
 
 	var state = app.defaultState();
@@ -130,19 +148,52 @@ pub fn main() !void {
 		} else |_| {}
 	}
 
+	// Glyph mode precedence: default (density) → env var → CLI flag
+	if (parseBoolEnv("MANDELBROT_SUBBLOCK")) {
+		state.glyph_mode = .blocks;
+	}
+	if (cli_glyph_mode) |m| {
+		state.glyph_mode = m;
+	}
+
 	if (bench_zoom_n) |n| {
 		try runBenchZoomSequence(allocator, state, n, bench_quiet);
 		return;
 	}
 
 	if (single_frame) {
-		const frame = try renderer.renderFrame(.{
+		const render_state = renderer.RenderState{
 			.center_re = state.center_re,
 			.center_im = state.center_im,
 			.zoom = state.zoom,
 			.max_iter = state.max_iter,
 			.show_info = state.show_info,
-		}, state.term_width, state.term_height, allocator);
+			.glyph_mode = state.glyph_mode,
+		};
+		const frame = switch (state.glyph_mode) {
+			.density => try renderer.renderFrame(render_state, state.term_width, state.term_height, allocator),
+			.blocks => blk: {
+				const render_height: u16 = if (state.show_info and state.term_height > 1)
+					state.term_height - 1
+				else
+					state.term_height;
+				const buf_width: u16 = state.term_width * 2;
+				const buf_height: u16 = render_height * 2;
+				const pixel_count = @as(usize, buf_width) * @as(usize, buf_height);
+				const iter_buf = try allocator.alloc(f64, pixel_count);
+				defer allocator.free(iter_buf);
+				try mandelbrot.parallelComputeRegion(.{
+					.center_re = state.center_re,
+					.center_im = state.center_im,
+					.zoom = state.zoom,
+					.width = buf_width,
+					.height = buf_height,
+					.max_iter = state.max_iter,
+					.aspect_ratio = 0.5,
+				}, iter_buf, null);
+				break :blk try renderer.renderFrameFromBlocksBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator);
+			},
+		};
 		defer allocator.free(frame);
 
 		var stdout_buf: [4096]u8 = undefined;
@@ -171,6 +222,19 @@ fn parseU32Env(name: []const u8) ?u32 {
 fn parseU16Env(name: []const u8) ?u16 {
 	const val = std.posix.getenv(name) orelse return null;
 	return std.fmt.parseInt(u16, val, 10) catch null;
+}
+
+fn parseBoolEnv(name: []const u8) bool {
+	const val = std.posix.getenv(name) orelse return false;
+	// Case-insensitive compare against true/1/yes/on
+	var buf: [16]u8 = undefined;
+	if (val.len >= buf.len) return false;
+	for (val, 0..) |c, i| buf[i] = std.ascii.toLower(c);
+	const lower = buf[0..val.len];
+	return std.mem.eql(u8, lower, "true") or
+		std.mem.eql(u8, lower, "1") or
+		std.mem.eql(u8, lower, "yes") or
+		std.mem.eql(u8, lower, "on");
 }
 
 fn runBenchZoomSequence(
