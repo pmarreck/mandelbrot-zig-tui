@@ -9,18 +9,26 @@
 - `devShells.default` — dev shell with zig + hyperfine
 
 ## `src/main.zig`
-- `main()` — entry point: arg parsing (--help, --about, --single-frame), env var injection, app launch
+- `main()` — entry point: arg parsing (--help, --about, --single-frame, --bench-zoom-sequence, --bench-quiet), env var injection, app launch
+- `runBenchZoomSequence(allocator, state, n, quiet)` — end-to-end bench driver: N zoom-in frames with per-frame compute/render timing, prints Total/Avg summary
 - `parseF128Env()` — parse f128 from environment variable (via f64)
 - `parseU32Env()` — parse u32 from environment variable
 - `parseU16Env()` — parse u16 from environment variable
 
 ## `src/core/mandelbrot.zig`
-- `computeIterations(c_re, c_im, max_iter)` — f128 escape-time with smooth coloring (n + 1 - log2(log2(|z|))); returns `INTERIOR` (-1.0) for points in the set
-- `computeRegion(params, out)` — fill buffer with iteration counts (vertex semantics: `origin + col*step`)
-- `computeRowStride(params, out, thread_idx, num_threads)` — compute interleaved rows (row i, i+N, i+2N, ...) for balanced parallel load
-- `parallelComputeRegion(params, out, num_threads)` — split rows across N threads using stride-based assignment (auto-detects if num_threads is null); falls back to sequential for tiny heights
-- `computeRegionDirect(level)` — fill a CacheLevel using pointAt (vertex semantics, single-threaded)
-- `computeDoubling(parent, child, ?generation)` — spawn 3 threads to fill odd-col/even-row, even-col/odd-row, odd-col/odd-row patterns of a 2x child; checks generation counter for cancellation
+- `computeIterationsT(comptime T, c_re: T, c_im: T, max_iter)` — generic smooth iteration count over T (f64 or f128); returns `INTERIOR` (-1.0) for points in the set
+- `computeIterations(c_re: f64, c_im: f64, max_iter)` — default hardware-fast path (f64, valid to ~10^13 zoom)
+- `computeIterationsF128(c_re: f128, c_im: f128, max_iter)` — precision path for deep zoom (slow soft-float on ARM64/x86_64)
+- `computeRegion(params, out)` — sequential fill (delegates to `computeRowStride(_, _, 0, 1)` so seq and parallel share one dispatching inner loop)
+- `computeRowStride(params, out, thread_idx, num_threads)` — interleaved rows with f64/f128 dispatch based on `params.zoom` vs `F128_DISPATCH_THRESHOLD`
+- `parallelComputeRegion(params, out, ?num_threads)` — spawn N threads running `computeRowStride`; null = auto-detect via `autoThreadCount()` (cap 12)
+- `autoThreadCount()` — `min(max(getCpuCount(), 1), MAX_THREADS=12)`
+- `computeRegionDirect(level)` — fill a CacheLevel; dispatches f64/f128 based on `level.step_re` vs `F128_STEP_THRESHOLD`
+- `computeDoubling(parent, child, ?generation)` — 3 threads fill odd/even/odd-odd offset patterns of a 2x child; offsetWorker internally dispatches f64/f128
+- `resetDispatchCounters() / f64DispatchCount() / f128DispatchCount()` — test-only observability for f64 vs f128 dispatch
+- `F128_DISPATCH_THRESHOLD` = 1.0e13 (zoom-based cutoff)
+- `F128_STEP_THRESHOLD` = 2.0e-15 (step-based cutoff for cache levels)
+- `MAX_THREADS` = 12 (cap on worker thread count)
 - `RegionParams` — struct defining viewport for region computation
 - `INTERIOR` — sentinel value for points in the set (-1.0)
 
