@@ -82,3 +82,83 @@ test "adjacent smooth iterations produce smooth color transitions" {
 	// Allow some jumps at palette wrap points but not too many
 	try testing.expect(large_jumps < 20);
 }
+
+test "iterToBlock all-interior returns space with black" {
+	const block = coloring.iterToBlock(mandelbrot.INTERIOR, mandelbrot.INTERIOR, mandelbrot.INTERIOR, mandelbrot.INTERIOR, 256);
+	try testing.expect(block.all_interior);
+	try testing.expectEqualStrings(" ", block.char_bytes);
+	try testing.expectEqual(@as(u8, 0), block.fg.r);
+	try testing.expectEqual(@as(u8, 0), block.fg.g);
+	try testing.expectEqual(@as(u8, 0), block.fg.b);
+	try testing.expectEqual(@as(u8, 0), block.bg.r);
+	try testing.expectEqual(@as(u8, 0), block.bg.g);
+	try testing.expectEqual(@as(u8, 0), block.bg.b);
+}
+
+test "iterToBlock all-exterior uniform returns full block" {
+	const block = coloring.iterToBlock(50.0, 50.0, 50.0, 50.0, 256);
+	try testing.expect(!block.all_interior);
+	try testing.expectEqualStrings("█", block.char_bytes);
+	try testing.expectEqual(@as(u8, 0), block.bg.r);
+	try testing.expectEqual(@as(u8, 0), block.bg.g);
+	try testing.expectEqual(@as(u8, 0), block.bg.b);
+	const expected_fg = coloring.iterToColor(50.0, 256);
+	try testing.expectEqual(expected_fg.r, block.fg.r);
+	try testing.expectEqual(expected_fg.g, block.fg.g);
+	try testing.expectEqual(expected_fg.b, block.fg.b);
+}
+
+test "iterToBlock all-exterior split returns correct quadrant" {
+	// tl=10, tr=20, bl=100, br=110 — median ≈ 60
+	// fg_mask: tl(10)<60→0, tr(20)<60→0, bl(100)≥60→1, br(110)≥60→1
+	// fg_mask = 0b0011 → "▄" (bottom half)
+	const block = coloring.iterToBlock(10.0, 20.0, 100.0, 110.0, 256);
+	try testing.expect(!block.all_interior);
+	try testing.expectEqualStrings("▄", block.char_bytes);
+}
+
+test "iterToBlock mixed interior/exterior returns correct quadrant" {
+	// tl=INTERIOR, tr=50, bl=INTERIOR, br=50
+	// Mixed case: interior → BG, exterior → FG. tr=bit 2, br=bit 0 → fg_mask=0b0101 → "▐"
+	const block = coloring.iterToBlock(mandelbrot.INTERIOR, 50.0, mandelbrot.INTERIOR, 50.0, 256);
+	try testing.expect(!block.all_interior);
+	try testing.expectEqualStrings("▐", block.char_bytes);
+	try testing.expectEqual(@as(u8, 0), block.bg.r);
+	try testing.expectEqual(@as(u8, 0), block.bg.g);
+	try testing.expectEqual(@as(u8, 0), block.bg.b);
+	const expected_fg = coloring.iterToColor(50.0, 256);
+	try testing.expectEqual(expected_fg.r, block.fg.r);
+}
+
+test "iterToBlock quadrant lookup table — all 16 fg_masks produce expected chars" {
+	const fg_val: f64 = 100.0;
+	const bg_val: f64 = mandelbrot.INTERIOR;
+
+	const cases = [_]struct { mask: u4, expected: []const u8 }{
+		.{ .mask = 0b0000, .expected = " " },
+		.{ .mask = 0b0001, .expected = "▗" },
+		.{ .mask = 0b0010, .expected = "▖" },
+		.{ .mask = 0b0011, .expected = "▄" },
+		.{ .mask = 0b0100, .expected = "▝" },
+		.{ .mask = 0b0101, .expected = "▐" },
+		.{ .mask = 0b0110, .expected = "▞" },
+		.{ .mask = 0b0111, .expected = "▟" },
+		.{ .mask = 0b1000, .expected = "▘" },
+		.{ .mask = 0b1001, .expected = "▚" },
+		.{ .mask = 0b1010, .expected = "▌" },
+		.{ .mask = 0b1011, .expected = "▙" },
+		.{ .mask = 0b1100, .expected = "▀" },
+		.{ .mask = 0b1101, .expected = "▜" },
+		.{ .mask = 0b1110, .expected = "▛" },
+		.{ .mask = 0b1111, .expected = "█" },
+	};
+
+	for (cases) |c| {
+		const tl = if (c.mask & 0b1000 != 0) fg_val else bg_val;
+		const tr = if (c.mask & 0b0100 != 0) fg_val else bg_val;
+		const bl = if (c.mask & 0b0010 != 0) fg_val else bg_val;
+		const br = if (c.mask & 0b0001 != 0) fg_val else bg_val;
+		const block = coloring.iterToBlock(tl, tr, bl, br, 256);
+		try testing.expectEqualStrings(c.expected, block.char_bytes);
+	}
+}
