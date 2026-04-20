@@ -312,6 +312,9 @@ pub fn processEvent(state: AppState, event: input.Event) AppState {
 			s.show_info = !s.show_info;
 			s.needs_redraw = true;
 		},
+		.key_g => {
+			// Placeholder: glyph mode cycling will be wired in a later task.
+		},
 		.resize => {
 			s.needs_redraw = true;
 		},

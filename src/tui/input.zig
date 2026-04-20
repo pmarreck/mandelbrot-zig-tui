@@ -16,6 +16,7 @@ pub const Event = union(enum) {
 	key_bracket_open,
 	key_bracket_close,
 	key_i,
+	key_g,
 	arrow_up,
 	arrow_down,
 	arrow_left,
@@ -46,6 +47,7 @@ pub fn parseEvent(bytes: []const u8) Event {
 			'[' => .key_bracket_open,
 			']' => .key_bracket_close,
 			'i' => .key_i,
+			'g' => .key_g,
 			0x03 => .ctrl_c,
 			else => .unknown,
 		};

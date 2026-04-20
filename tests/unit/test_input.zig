@@ -138,3 +138,8 @@ test "unknown bytes parse as unknown" {
 	const event = input.parseEvent(&[_]u8{0xFF});
 	try testing.expectEqual(input.Event.unknown, event);
 }
+
+test "parse 'g' as key_g" {
+	const event = input.parseEvent("g");
+	try testing.expectEqual(input.Event.key_g, event);
+}
