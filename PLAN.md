@@ -20,6 +20,7 @@
 
 ## Future Enhancements
 - [ ] **Improve parallel speedup** — currently 1.55x for 3 threads due to load imbalance (middle row-band hits interior points every pixel). Switch to interleaved/striped row assignment.
+- [ ] **Double-double arithmetic for deep-zoom precision** — replace f128 soft-float fallback with DD (two f64 representing hi+lo). Uses hardware f64 throughout, expected 3-10x faster than soft-float f128 on ARM64/x86_64. Gives ~106 bits of mantissa (deep enough for ~10^30 zoom). Keep f128 impl as test ground-truth. Spec reference: docs/superpowers/specs/2026-04-19-perf-optimization-design.md (Optimization 3 section).
 - [ ] **Shift-on-zoom-in optimization** — use pre-computed Level 1 as new Level 0 after zoom-at-point (currently invalidates cache). Requires sub-region extraction via `sampleStride`.
 - [ ] **Pan shift-and-fill** — keep overlapping cached data on pan, only compute newly-exposed edges.
 - [ ] **Benchmark regression detection** — `bm` currently only appends. Add % comparison against most recent run, fail on >10% regression.
