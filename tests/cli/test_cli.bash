@@ -89,6 +89,23 @@ else
 	fail "--single-frame is deterministic" "outputs differ"
 fi
 
+# Test: --bench-zoom-sequence produces summary output
+output=$("$BINARY" --bench-zoom-sequence 3 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && echo "$output" | grep -q "Total:" && echo "$output" | grep -q "Avg/frame:"; then
+	pass "--bench-zoom-sequence 3 produces Total and Avg/frame"
+else
+	fail "--bench-zoom-sequence 3 produces Total and Avg/frame" "rc=$rc"
+fi
+
+# Test: --bench-zoom-sequence + --bench-quiet suppresses per-frame output
+output=$("$BINARY" --bench-zoom-sequence 3 --bench-quiet 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && echo "$output" | grep -q "Total:" && ! echo "$output" | grep -q "Frame 1"; then
+	pass "--bench-quiet suppresses per-frame output"
+else
+	fail "--bench-quiet suppresses per-frame output" "rc=$rc"
+fi
 # Test: debug build runs without crash
 output=$("$BINARY" --about 2>&1)
 rc=$?

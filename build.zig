@@ -75,6 +75,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "terminal", .module = terminal_mod },
                 .{ .name = "viewport", .module = viewport_mod },
                 .{ .name = "renderer", .module = renderer_mod },
+                .{ .name = "mandelbrot", .module = mandelbrot_mod },
             },
         }),
     });
@@ -104,6 +105,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "terminal", .module = terminal_mod },
                 .{ .name = "viewport", .module = viewport_mod },
                 .{ .name = "renderer", .module = renderer_mod },
+                .{ .name = "mandelbrot", .module = mandelbrot_mod },
             },
         }),
     });
