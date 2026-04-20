@@ -22,6 +22,7 @@
 - [x] Perf: f64 hot loop with f128 fallback above zoom 10^13 — ~2026-04-19 21:20 EST
 - [x] Perf: --bench-zoom-sequence CLI flag + hyperfine-friendly --bench-quiet — ~2026-04-19 21:30 EST
 - [x] Benchmark regression detection in bm script — ~2026-04-19 20:15 EST
+- [x] Block quadrant glyph mode (2×2 sub-pixel rendering, `g` toggle, `--glyph=blocks`, `MANDELBROT_SUBBLOCK` env var) — ~2026-04-20 EST
 
 ## Performance Evidence
 
@@ -47,6 +48,8 @@ Key commits: `b33a57d` (threads), `40007ac` (stride), `12a4a94` (f64 hot loop).
 - [ ] Arbitrary precision (bignum) for unlimited zoom depth
 - [ ] C FFI surface exposing core functions
 - [ ] "i" info bar shows command to restore exact view (regardless of terminal size)
+- [ ] Braille glyph mode (2×4 sub-pixels with `\x1b[1m` bold for contrast) — deferred; compare against blocks mode
+- [ ] Sextants glyph mode (2×3 sub-pixels, Unicode 13.0+) — deferred; doesn't align with 2× cache pyramid
 - [ ] Additional fractal types (Julia sets, Burning Ship)
 - [ ] --lang / i18n support per CLI guidelines
 - [ ] Cross-platform builds (5 OS/arch targets via build_all)

@@ -115,6 +115,33 @@ else
 	fail "debug build runs without crash" "rc=$rc"
 fi
 
+# Test: --glyph=blocks produces output with block-quadrant chars
+output=$("$BINARY" --glyph=blocks --single-frame 2>/dev/null)
+rc=$?
+if [ "$rc" -eq 0 ] && echo "$output" | grep -qE $'\xe2\x96\x80|\xe2\x96\x84|\xe2\x96\x8c|\xe2\x96\x90|\xe2\x96\x88'; then
+	pass "--glyph=blocks produces block-quadrant chars"
+else
+	fail "--glyph=blocks produces block-quadrant chars" "rc=$rc"
+fi
+
+# Test: MANDELBROT_SUBBLOCK=1 env var activates blocks mode
+output=$(MANDELBROT_SUBBLOCK=1 "$BINARY" --single-frame 2>/dev/null)
+rc=$?
+if [ "$rc" -eq 0 ] && echo "$output" | grep -qE $'\xe2\x96\x80|\xe2\x96\x84|\xe2\x96\x8c|\xe2\x96\x90|\xe2\x96\x88'; then
+	pass "MANDELBROT_SUBBLOCK=1 produces block-quadrant chars"
+else
+	fail "MANDELBROT_SUBBLOCK=1 produces block-quadrant chars" "rc=$rc"
+fi
+
+# Test: --glyph=density overrides MANDELBROT_SUBBLOCK=1
+output=$(MANDELBROT_SUBBLOCK=1 "$BINARY" --glyph=density --single-frame 2>/dev/null)
+rc=$?
+if [ "$rc" -eq 0 ] && ! echo "$output" | grep -qE $'\xe2\x96\x80|\xe2\x96\x84|\xe2\x96\x8c|\xe2\x96\x90|\xe2\x96\x88'; then
+	pass "--glyph=density overrides MANDELBROT_SUBBLOCK=1"
+else
+	fail "--glyph=density overrides MANDELBROT_SUBBLOCK=1" "rc=$rc"
+fi
+
 echo ""
 echo "CLI Tests: $passed/$tests passed, $errors failed"
 exit "$errors"

@@ -14,6 +14,7 @@
 - `parseF128Env()` — parse f128 from environment variable (via f64)
 - `parseU32Env()` — parse u32 from environment variable
 - `parseU16Env()` — parse u16 from environment variable
+- `parseBoolEnv(name)` — case-insensitive parse of true/1/yes/on boolean env vars (used for MANDELBROT_SUBBLOCK)
 
 ## `src/core/mandelbrot.zig`
 - `computeIterationsT(comptime T, c_re: T, c_im: T, max_iter)` — generic smooth iteration count over T (f64 or f128); returns `INTERIOR` (-1.0) for points in the set
@@ -61,9 +62,14 @@
 - `Direction` — enum: up, down, left, right
 
 ## `src/core/coloring.zig`
-- `iterToCell(iter, max_iter)` — map iteration to Cell (char + fg/bg color)
-- `Cell` — struct: char, fg_color, bg_color
-- `iterToColor256(iter)` — cyclic HSV gradient through ANSI 216-color cube
+- `iterToCell(iter, max_iter)` — density mode: cyclic density char + palette color
+- `iterToBlock(tl, tr, bl, br, max_iter)` — blocks mode: 2×2 sub-pixels → Unicode quadrant + FG/BG colors (median-split clustering)
+- `iterToColor(iter, max_iter)` — shared palette primitive (Bernstein polynomial + log transform) used by both iterToCell and iterToBlock
+- `Cell` — density mode result: char + color + is_interior
+- `BlockCell` — blocks mode result: char_bytes (UTF-8) + fg + bg + all_interior
+- `GlyphMode` — enum { density, blocks }
+- `RGB` — struct: r, g, b
+- `quadrant_glyphs` — 16-entry UTF-8 lookup table indexed by 4-bit fg_mask
 
 ## `src/tui/terminal.zig`
 - `enterRawMode() / exitRawMode()` — termios save/restore
@@ -78,13 +84,14 @@
 ## `src/tui/input.zig`
 - `parseEvent(bytes)` — parse raw stdin bytes into Event union
 - `parseSgrMouse(bytes)` — parse SGR mouse report payload
-- `Event` — tagged union: key_q, key_plus, key_minus, arrows, mouse_left_press/release, mouse_right_press/release, mouse_drag, scroll_up/down, ctrl_c, resize, unknown
+- `Event` — tagged union: key_q, key_plus, key_minus, key_g, arrows, mouse_left_press/release, mouse_right_press/release, mouse_drag, scroll_up/down, ctrl_c, resize, unknown
 - `MousePos` — struct: col, row
 
 ## `src/tui/renderer.zig`
-- `renderFrame(state, width, height, allocator)` — convenience: compute + render in one call
-- `renderFrameFromBuffer(state, width, height, iter_buf, allocator)` — pure render from pre-computed buffer
-- `RenderState` — struct: center, zoom, max_iter, show_info
+- `renderFrame(state, width, height, allocator)` — convenience: compute + render (density mode only)
+- `renderFrameFromBuffer(state, width, height, iter_buf, allocator)` — density-mode render from pre-computed buffer
+- `renderFrameFromBlocksBuffer(state, width, height, iter_buf, allocator)` — blocks-mode render from 2×-resolution pre-computed buffer
+- `RenderState` — struct: center, zoom, max_iter, show_info, glyph_mode
 
 ## `src/tui/pool.zig`
 - `BackgroundScheduler` — long-lived coordinator thread managing progressive pre-computation
