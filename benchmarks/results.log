@@ -7,3 +7,47 @@ Git: a9591a2 on yolo
   Parallel:    26.61 ms/frame
   Speedup:     1.55x
 
+
+=== Benchmark run: 2026-04-19 20:39:06 EDT ===
+Git: 8187d1c on yolo
+
+
+=== Mandelbrot Render Benchmarks ===
+
+  Shallow (zoom=1): 200x60, iter=256, zoom=1, N=10
+    Sequential:  41.39 ms/frame
+    Parallel:    25.93 ms/frame
+    Speedup:     1.60x
+
+  Deep (zoom=1000): 200x60, iter=1000, zoom=1000, N=10
+    Sequential:  66.10 ms/frame
+    Parallel:    25.59 ms/frame
+    Speedup:     2.58x
+
+  Small (80x24): 80x24, iter=256, zoom=1, N=10
+    Sequential:  6.36 ms/frame
+    Parallel:    4.10 ms/frame
+    Speedup:     1.55x
+
+
+=== Benchmark run: 2026-04-19 20:39:21 EDT ===
+Git: 8187d1c on yolo
+
+
+=== Mandelbrot Render Benchmarks ===
+
+  Shallow (zoom=1): 200x60, iter=256, zoom=1, N=10
+    Sequential:  41.01 ms/frame
+    Parallel:    26.52 ms/frame
+    Speedup:     1.55x
+
+  Deep (zoom=1000): 200x60, iter=1000, zoom=1000, N=10
+    Sequential:  66.11 ms/frame
+    Parallel:    25.61 ms/frame
+    Speedup:     2.58x
+
+  Small (80x24): 80x24, iter=256, zoom=1, N=10
+    Sequential:  6.39 ms/frame
+    Parallel:    4.04 ms/frame
+    Speedup:     1.58x
+

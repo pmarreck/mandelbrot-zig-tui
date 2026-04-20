@@ -1,14 +1,43 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Create benchmarks log directory
 mkdir -p benchmarks
-
 LOGFILE="benchmarks/results.log"
+TMP_OUT=$(mktemp)
 
-echo "=== Benchmark run: $(date '+%Y-%m-%d %H:%M:%S %Z') ===" | tee -a "$LOGFILE"
-echo "Git: $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)" | tee -a "$LOGFILE"
-echo "" | tee -a "$LOGFILE"
+# Capture the most recent run's Speedup lines (if any) for comparison
+PREV_RUN=""
+if [ -f "$LOGFILE" ]; then
+	PREV_RUN=$(awk '/^=== Benchmark run:/{buf=""} {buf=buf"\n"$0} END{print buf}' "$LOGFILE" | grep -E "Speedup:" || true)
+fi
 
-# Build + run in release mode. The benchmark asserts non-Debug internally.
-nix develop -c zig build bench 2>&1 | tee -a "$LOGFILE"
+{
+	echo ""
+	echo "=== Benchmark run: $(date '+%Y-%m-%d %H:%M:%S %Z') ==="
+	echo "Git: $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
+	echo ""
+} | tee -a "$LOGFILE"
+
+nix develop -c zig build bench 2>&1 | tee "$TMP_OUT" | tee -a "$LOGFILE"
+
+# Regression check: compare current speedups against previous run
+if [ -n "$PREV_RUN" ]; then
+	CUR_RUN=$(grep -E "Speedup:" "$TMP_OUT" || true)
+	paste <(echo "$PREV_RUN") <(echo "$CUR_RUN") | while IFS=$'\t' read -r prev cur; do
+		if [ -z "$prev" ] || [ -z "$cur" ]; then
+			continue
+		fi
+		prev_val=$(echo "$prev" | grep -oE '[0-9]+\.[0-9]+')
+		cur_val=$(echo "$cur" | grep -oE '[0-9]+\.[0-9]+')
+		if [ -n "$prev_val" ] && [ -n "$cur_val" ]; then
+			awk -v p="$prev_val" -v c="$cur_val" 'BEGIN{
+				pct = (c-p)/p*100;
+				if (pct < -10) {
+					printf "\033[31mREGRESSION: speedup %.2fx -> %.2fx (%.1f%% change)\033[0m\n", p, c, pct;
+				}
+			}'
+		fi
+	done
+fi
+
+mv -f "$TMP_OUT" "${TMP_OUT}.done" 2>/dev/null || true
