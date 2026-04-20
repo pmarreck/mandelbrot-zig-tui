@@ -10,6 +10,7 @@ const viewport = @import("viewport");
 const cache_mod = @import("cache");
 const mandelbrot = @import("mandelbrot");
 const pool = @import("pool");
+const coloring = @import("coloring");
 
 const ZOOM_FACTOR: f128 = 2.0;
 const ASPECT_RATIO: f64 = 0.5;
@@ -30,6 +31,7 @@ pub const AppState = struct {
 	drag_start: ?input.MousePos = null,
 	/// Set to true once a drag motion event fires. Prevents release from zooming.
 	did_drag: bool = false,
+	glyph_mode: coloring.GlyphMode = .density,
 };
 
 pub fn defaultState() AppState {
@@ -98,75 +100,79 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 				state.term_height - 1
 			else
 				state.term_height;
-			const pixel_count = @as(usize, state.term_width) * @as(usize, render_height);
+
+			// Sub-pixel multiplier: 1 for density mode, 2 for blocks mode
+			const sub_mul: u16 = switch (state.glyph_mode) {
+				.density => 1,
+				.blocks => 2,
+			};
+			const buf_width: u16 = state.term_width * sub_mul;
+			const buf_height: u16 = render_height * sub_mul;
+			const pixel_count = @as(usize, buf_width) * @as(usize, buf_height);
 
 			const iter_buf = try allocator.alloc(f64, pixel_count);
 			defer allocator.free(iter_buf);
 
-			// Check cache Level 0 first (fast path: avoids recomputation when
-			// the viewport matches a completed cache level, e.g. after a redraw
-			// toggle that didn't change geometry).
+			// Check cache Level 0 first
 			var cache_hit = false;
 			if (cache_stack.levels[0]) |level| {
-				if (level.complete and level.width == state.term_width and level.height == render_height) {
+				if (level.complete and level.width == buf_width and level.height == buf_height) {
 					@memcpy(iter_buf, level.data[0..pixel_count]);
 					cache_hit = true;
 				}
 			}
 
 			if (!cache_hit) {
-				// Stop scheduler and join before mutating cache — prevents
-				// a data race where the coordinator reads cache.levels while
-				// the main thread frees them. requestWork() later respawns.
 				scheduler.stop();
 				cache_stack.invalidateAll(allocator);
 
-				// Allocate Level 0 to match the current viewport.
 				try cache_stack.initForViewport(
 					allocator,
 					state.center_re,
 					state.center_im,
 					state.zoom,
-					state.term_width,
-					render_height,
+					buf_width,
+					buf_height,
 					state.max_iter,
 					ASPECT_RATIO,
 				);
 
-				// Parallel compute into iter_buf (vertex semantics — matches
-				// cache.pointAt so the buffer is bit-identical to a cache fill).
 				try mandelbrot.parallelComputeRegion(.{
 					.center_re = state.center_re,
 					.center_im = state.center_im,
 					.zoom = state.zoom,
-					.width = state.term_width,
-					.height = render_height,
+					.width = buf_width,
+					.height = buf_height,
 					.max_iter = state.max_iter,
 					.aspect_ratio = ASPECT_RATIO,
 				}, iter_buf, null);
 
-				// Copy into cache Level 0 and mark complete so the scheduler
-				// can start doubling into Level 1.
 				if (cache_stack.levels[0]) |*level| {
 					@memcpy(level.data, iter_buf);
 					level.complete = true;
 				}
 			}
 
-			const frame = try renderer.renderFrameFromBuffer(.{
+			// Dispatch to the correct renderer based on glyph mode
+			const render_state = renderer.RenderState{
 				.center_re = state.center_re,
 				.center_im = state.center_im,
 				.zoom = state.zoom,
 				.max_iter = state.max_iter,
 				.show_info = state.show_info,
-			}, state.term_width, state.term_height, iter_buf, allocator);
+				.glyph_mode = state.glyph_mode,
+			};
+
+			const frame = switch (state.glyph_mode) {
+				.density => try renderer.renderFrameFromBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator),
+				.blocks => try renderer.renderFrameFromBlocksBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator),
+			};
 			defer allocator.free(frame);
 
 			try stdout.writeAll(frame);
 			try stdout.flush();
 			state.needs_redraw = false;
 
-			// Kick background pre-computation (levels 1-4).
 			scheduler.requestWork();
 		}
 
@@ -203,7 +209,8 @@ fn viewportChanged(old: AppState, new: AppState) bool {
 		old.zoom != new.zoom or
 		old.max_iter != new.max_iter or
 		old.term_width != new.term_width or
-		old.term_height != new.term_height;
+		old.term_height != new.term_height or
+		old.glyph_mode != new.glyph_mode;
 }
 
 /// Pure state transition function -- given current state and an event, returns new state.
@@ -313,7 +320,12 @@ pub fn processEvent(state: AppState, event: input.Event) AppState {
 			s.needs_redraw = true;
 		},
 		.key_g => {
-			// Placeholder: glyph mode cycling will be wired in a later task.
+			// Cycle glyph mode: density → blocks → density
+			s.glyph_mode = switch (s.glyph_mode) {
+				.density => .blocks,
+				.blocks => .density,
+			};
+			s.needs_redraw = true;
 		},
 		.resize => {
 			s.needs_redraw = true;
