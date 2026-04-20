@@ -79,8 +79,16 @@ pub fn computeRegion(params: RegionParams, out: []f64) void {
 	}
 }
 
-/// Number of worker threads for parallel computation.
-const NUM_THREADS: u32 = 3;
+/// Maximum number of worker threads we'll ever spawn.
+/// Cap 12 to leave headroom for main thread + OS + other processes on many-core systems.
+const MAX_THREADS: u32 = 12;
+
+/// Detect optimal worker thread count for the current CPU.
+/// Caps at MAX_THREADS. Returns 3 as a safe fallback if detection fails.
+pub fn autoThreadCount() u32 {
+	const count = std.Thread.getCpuCount() catch return 3;
+	return @intCast(@min(@max(count, @as(usize, 1)), MAX_THREADS));
+}
 
 /// Compute a contiguous band of rows (from start_row to end_row exclusive).
 /// Same math as computeRegion but only fills the specified row range.
@@ -111,27 +119,30 @@ pub fn computeRowBand(params: RegionParams, out: []f64, start_row: u16, end_row:
 	}
 }
 
-/// Parallel version of computeRegion: splits rows across 3 threads.
-/// Output is identical to sequential computeRegion (floating-point ops are
-/// deterministic given the same inputs and each pixel is independent).
-/// Falls back to sequential for very small heights (< NUM_THREADS rows).
-pub fn parallelComputeRegion(params: RegionParams, out: []f64) !void {
+/// Parallel version of computeRegion. Splits rows across `num_threads` threads.
+/// If `num_threads` is null, auto-detects via autoThreadCount().
+/// Output is identical to sequential computeRegion.
+/// Falls back to sequential for very small heights (< num_threads rows) or when n <= 1.
+pub fn parallelComputeRegion(params: RegionParams, out: []f64, num_threads: ?u32) !void {
+	const n = num_threads orelse autoThreadCount();
 	const height = params.height;
-	if (height < NUM_THREADS) {
-		// Too few rows for threading — fall back to sequential
+	if (height < n or n <= 1) {
 		computeRegion(params, out);
 		return;
 	}
 
-	const rows_per_thread = height / NUM_THREADS;
-	var threads: [NUM_THREADS]std.Thread = undefined;
+	const rows_per_thread = height / n;
+	var threads: [MAX_THREADS]std.Thread = undefined;
 	var i: u32 = 0;
-	while (i < NUM_THREADS) : (i += 1) {
+	while (i < n) : (i += 1) {
 		const start_row: u16 = @intCast(i * rows_per_thread);
-		const end_row: u16 = if (i == NUM_THREADS - 1) height else @intCast((i + 1) * rows_per_thread);
+		const end_row: u16 = if (i == n - 1) height else @intCast((i + 1) * rows_per_thread);
 		threads[i] = try std.Thread.spawn(.{}, computeRowBand, .{ params, out, start_row, end_row });
 	}
-	for (&threads) |*t| t.join();
+	var j: u32 = 0;
+	while (j < n) : (j += 1) {
+		threads[j].join();
+	}
 }
 
 const cache_mod = @import("cache");

@@ -143,7 +143,7 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 					.height = render_height,
 					.max_iter = state.max_iter,
 					.aspect_ratio = ASPECT_RATIO,
-				}, iter_buf);
+				}, iter_buf, null);
 
 				// Copy into cache Level 0 and mark complete so the scheduler
 				// can start doubling into Level 1.

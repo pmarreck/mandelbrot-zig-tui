@@ -24,7 +24,7 @@ test "parallelComputeRegion matches sequential computeRegion" {
 	defer allocator.free(parallel);
 
 	mandelbrot.computeRegion(params, sequential);
-	try mandelbrot.parallelComputeRegion(params, parallel);
+	try mandelbrot.parallelComputeRegion(params, parallel, null);
 
 	try testing.expectEqualSlices(f64, sequential, parallel);
 }
@@ -51,7 +51,7 @@ test "parallelComputeRegion works with odd row count" {
 	defer allocator.free(parallel);
 
 	mandelbrot.computeRegion(params, sequential);
-	try mandelbrot.parallelComputeRegion(params, parallel);
+	try mandelbrot.parallelComputeRegion(params, parallel, null);
 
 	try testing.expectEqualSlices(f64, sequential, parallel);
 }
@@ -79,7 +79,7 @@ test "parallelComputeRegion handles small heights (fewer rows than threads)" {
 	defer allocator.free(parallel);
 
 	mandelbrot.computeRegion(params, sequential);
-	try mandelbrot.parallelComputeRegion(params, parallel);
+	try mandelbrot.parallelComputeRegion(params, parallel, null);
 
 	try testing.expectEqualSlices(f64, sequential, parallel);
 }
@@ -301,4 +301,40 @@ test "computeDoubling: cancelled via generation counter leaves complete=false" {
 	try mandelbrot.computeDoubling(&parent, &child, &gen);
 	// No cancellation happened — should be complete
 	try testing.expect(child.complete);
+}
+
+test "parallelComputeRegion with explicit thread count produces identical output" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	defer _ = gpa.deinit();
+	const allocator = gpa.allocator();
+
+	const params = mandelbrot.RegionParams{
+		.center_re = -0.5,
+		.center_im = 0.0,
+		.zoom = 1.0,
+		.width = 40,
+		.height = 20,
+		.max_iter = 100,
+		.aspect_ratio = 0.5,
+	};
+
+	const size: usize = 40 * 20;
+	const buf_ref = try allocator.alloc(f64, size);
+	defer allocator.free(buf_ref);
+	mandelbrot.computeRegion(params, buf_ref);
+
+	// Test with 1, 2, 3, 4, 8 threads
+	const thread_counts = [_]u32{ 1, 2, 3, 4, 8 };
+	for (thread_counts) |n| {
+		const buf = try allocator.alloc(f64, size);
+		defer allocator.free(buf);
+		try mandelbrot.parallelComputeRegion(params, buf, n);
+		try testing.expectEqualSlices(f64, buf_ref, buf);
+	}
+}
+
+test "autoThreadCount returns something sensible" {
+	const n = mandelbrot.autoThreadCount();
+	try testing.expect(n >= 1);
+	try testing.expect(n <= 12);
 }

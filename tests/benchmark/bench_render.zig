@@ -43,7 +43,7 @@ fn benchmarkScenario(
 	timer.reset();
 	i = 0;
 	while (i < n_iters) : (i += 1) {
-		try mandelbrot.parallelComputeRegion(params, buf_par);
+		try mandelbrot.parallelComputeRegion(params, buf_par, null);
 	}
 	const par_ns = timer.read();
 
