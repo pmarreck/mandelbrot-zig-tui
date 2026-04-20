@@ -22,6 +22,19 @@ pub const Cell = struct {
 /// Space excluded: every exterior cell must be visible so fg color shows.
 const density_chars = ".:-=+*#%@";
 
+/// Convert a smooth iteration count to an RGB color via the Bernstein palette
+/// with log transform for visual band distribution.
+/// Interior points (iter == INTERIOR) return black.
+/// This is the shared coloring primitive — iterToCell (density mode) and
+/// iterToBlock (blocks mode, future) both call it.
+pub fn iterToColor(smooth_iter: f64, max_iter: u32) RGB {
+	if (smooth_iter == mandelbrot.INTERIOR) {
+		return .{ .r = 0, .g = 0, .b = 0 };
+	}
+	const t = logTransform(smooth_iter, max_iter);
+	return bernsteinPalette(t);
+}
+
 /// Map a smooth iteration count to a renderable terminal cell.
 /// Interior points (smooth_iter == INTERIOR) produce a black space.
 /// Exterior points get a cyclic density char + Bernstein polynomial RGB color.
@@ -34,12 +47,7 @@ pub fn iterToCell(smooth_iter: f64, max_iter: u32) Cell {
 	const int_iter: u32 = @intFromFloat(@max(0.0, smooth_iter));
 	const char = density_chars[int_iter % density_chars.len];
 
-	// Log transform: spread low iteration counts across more of the palette.
-	// Without this, most pixels at zoom=1 (escaping in 1-20 iters) cluster
-	// in a tiny slice of the color range.
-	const t = logTransform(smooth_iter, max_iter);
-
-	const color = bernsteinPalette(t);
+	const color = iterToColor(smooth_iter, max_iter);
 
 	return .{ .char = char, .color = color, .is_interior = false };
 }
