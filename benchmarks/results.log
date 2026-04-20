@@ -117,3 +117,25 @@ Git: b33a57d on yolo
     Parallel:    2.31 ms/frame
     Speedup:     2.83x
 
+
+=== Benchmark run: 2026-04-19 21:07:21 EDT ===
+Git: 40007ac on yolo
+
+
+=== Mandelbrot Render Benchmarks ===
+
+  Shallow (zoom=1): 200x60, iter=256, zoom=1, N=10
+    Sequential:  1.21 ms/frame
+    Parallel:    0.58 ms/frame
+    Speedup:     2.07x
+
+  Deep (zoom=1000): 200x60, iter=1000, zoom=1000, N=10
+    Sequential:  2.02 ms/frame
+    Parallel:    0.35 ms/frame
+    Speedup:     5.84x
+
+  Small (80x24): 80x24, iter=256, zoom=1, N=10
+    Sequential:  0.18 ms/frame
+    Parallel:    0.15 ms/frame
+    Speedup:     1.26x
+

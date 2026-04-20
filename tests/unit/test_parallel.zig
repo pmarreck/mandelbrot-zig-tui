@@ -160,7 +160,8 @@ test "computeRegionDirect fills a CacheLevel correctly" {
 		var c: u32 = 0;
 		while (c < 8) : (c += 1) {
 			const pt = level.pointAt(c, r);
-			const expected = mandelbrot.computeIterations(pt.re, pt.im, 100);
+			// level.step_re = 0.25 > F128_STEP_THRESHOLD, so computeRegionDirect uses the f64 path.
+			const expected = mandelbrot.computeIterations(@as(f64, @floatCast(pt.re)), @as(f64, @floatCast(pt.im)), 100);
 			try testing.expectEqual(expected, level.get(c, r));
 		}
 	}
@@ -398,4 +399,85 @@ test "computeRowStride single thread matches computeRegion" {
 	mandelbrot.computeRowStride(params, buf_stride, 0, 1);
 
 	try testing.expectEqualSlices(f64, buf_ref, buf_stride);
+}
+
+test "computeIterations f64 matches computeIterationsF128 at shallow zoom" {
+	// At shallow zoom, f64 and f128 paths must agree within a tight tolerance.
+	const points = [_][2]f64{
+		.{ 0.3, 0.5 },
+		.{ -1.2, 0.1 },
+		.{ 0.25, 0.35 },
+		.{ -0.5, 0.6 },
+		.{ 1.8, 0.0 },
+		.{ -2.0, 0.0 },
+		.{ 0.0, 1.0 },
+		.{ -0.7435, 0.1314 },
+	};
+	for (points) |p| {
+		const r_f64 = mandelbrot.computeIterations(p[0], p[1], 256);
+		const r_f128 = mandelbrot.computeIterationsF128(
+			@as(f128, p[0]),
+			@as(f128, p[1]),
+			256,
+		);
+		if (r_f64 == mandelbrot.INTERIOR) {
+			try testing.expectEqual(mandelbrot.INTERIOR, r_f128);
+		} else if (r_f128 == mandelbrot.INTERIOR) {
+			try testing.expectEqual(mandelbrot.INTERIOR, r_f64);
+		} else {
+			try testing.expectApproxEqAbs(r_f64, r_f128, 1e-9);
+		}
+	}
+}
+
+test "f64 dispatch counter increments on shallow zoom" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	defer _ = gpa.deinit();
+	const allocator = gpa.allocator();
+
+	mandelbrot.resetDispatchCounters();
+
+	const params = mandelbrot.RegionParams{
+		.center_re = -0.5,
+		.center_im = 0.0,
+		.zoom = 1.0, // Well below threshold — should use f64
+		.width = 20,
+		.height = 10,
+		.max_iter = 50,
+		.aspect_ratio = 0.5,
+	};
+	const size: usize = 20 * 10;
+	const buf = try allocator.alloc(f64, size);
+	defer allocator.free(buf);
+
+	mandelbrot.computeRowStride(params, buf, 0, 1);
+
+	try testing.expect(mandelbrot.f64DispatchCount() > 0);
+	try testing.expectEqual(@as(u64, 0), mandelbrot.f128DispatchCount());
+}
+
+test "f128 dispatch counter increments on deep zoom" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	defer _ = gpa.deinit();
+	const allocator = gpa.allocator();
+
+	mandelbrot.resetDispatchCounters();
+
+	const params = mandelbrot.RegionParams{
+		.center_re = -0.7435,
+		.center_im = 0.1314,
+		.zoom = 1.0e14, // Above threshold (10^13) — should use f128
+		.width = 20,
+		.height = 10,
+		.max_iter = 50,
+		.aspect_ratio = 0.5,
+	};
+	const size: usize = 20 * 10;
+	const buf = try allocator.alloc(f64, size);
+	defer allocator.free(buf);
+
+	mandelbrot.computeRowStride(params, buf, 0, 1);
+
+	try testing.expect(mandelbrot.f128DispatchCount() > 0);
+	try testing.expectEqual(@as(u64, 0), mandelbrot.f64DispatchCount());
 }
