@@ -90,10 +90,12 @@ pub fn autoThreadCount() u32 {
 	return @intCast(@min(@max(count, @as(usize, 1)), MAX_THREADS));
 }
 
-/// Compute a contiguous band of rows (from start_row to end_row exclusive).
-/// Same math as computeRegion but only fills the specified row range.
-/// Thread-safe: no shared mutable state, each thread writes to disjoint rows.
-pub fn computeRowBand(params: RegionParams, out: []f64, start_row: u16, end_row: u16) void {
+/// Compute rows with stride (interleaved) row assignment.
+/// Thread `thread_idx` of `num_threads` total processes rows
+/// `thread_idx, thread_idx + num_threads, thread_idx + 2*num_threads, ...`.
+/// This balances load across threads: the fractal's high-iteration interior
+/// gets spread across all threads instead of concentrating in one contiguous band.
+pub fn computeRowStride(params: RegionParams, out: []f64, thread_idx: u32, num_threads: u32) void {
 	const w: f128 = @floatFromInt(params.width);
 	const h: f128 = @floatFromInt(params.height);
 	const aspect: f128 = @floatCast(params.aspect_ratio);
@@ -107,19 +109,20 @@ pub fn computeRowBand(params: RegionParams, out: []f64, start_row: u16, end_row:
 	const start_re = params.center_re - range_re / 2.0;
 	const start_im = params.center_im - range_im / 2.0;
 
-	var row = start_row;
-	while (row < end_row) : (row += 1) {
-		var col: u16 = 0;
+	var row: u32 = thread_idx;
+	while (row < params.height) : (row += num_threads) {
+		var col: u32 = 0;
 		while (col < params.width) : (col += 1) {
 			const c_re = start_re + @as(f128, @floatFromInt(col)) * step_re;
 			const c_im = start_im + @as(f128, @floatFromInt(row)) * step_im;
-			const idx = @as(usize, row) * @as(usize, params.width) + @as(usize, col);
+			const idx = row * @as(u32, params.width) + col;
 			out[idx] = computeIterations(c_re, c_im, params.max_iter);
 		}
 	}
 }
 
-/// Parallel version of computeRegion. Splits rows across `num_threads` threads.
+/// Parallel version of computeRegion. Splits rows across `num_threads` threads
+/// using interleaved (stride-based) assignment for even load balancing.
 /// If `num_threads` is null, auto-detects via autoThreadCount().
 /// Output is identical to sequential computeRegion.
 /// Falls back to sequential for very small heights (< num_threads rows) or when n <= 1.
@@ -131,13 +134,10 @@ pub fn parallelComputeRegion(params: RegionParams, out: []f64, num_threads: ?u32
 		return;
 	}
 
-	const rows_per_thread = height / n;
 	var threads: [MAX_THREADS]std.Thread = undefined;
 	var i: u32 = 0;
 	while (i < n) : (i += 1) {
-		const start_row: u16 = @intCast(i * rows_per_thread);
-		const end_row: u16 = if (i == n - 1) height else @intCast((i + 1) * rows_per_thread);
-		threads[i] = try std.Thread.spawn(.{}, computeRowBand, .{ params, out, start_row, end_row });
+		threads[i] = try std.Thread.spawn(.{}, computeRowStride, .{ params, out, i, n });
 	}
 	var j: u32 = 0;
 	while (j < n) : (j += 1) {

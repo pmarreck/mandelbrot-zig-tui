@@ -338,3 +338,64 @@ test "autoThreadCount returns something sensible" {
 	try testing.expect(n >= 1);
 	try testing.expect(n <= 12);
 }
+
+test "computeRowStride produces same result as computeRegion" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	defer _ = gpa.deinit();
+	const allocator = gpa.allocator();
+
+	const params = mandelbrot.RegionParams{
+		.center_re = -0.5,
+		.center_im = 0.0,
+		.zoom = 1.0,
+		.width = 30,
+		.height = 15,
+		.max_iter = 100,
+		.aspect_ratio = 0.5,
+	};
+
+	const size: usize = 30 * 15;
+	const buf_ref = try allocator.alloc(f64, size);
+	defer allocator.free(buf_ref);
+	const buf_stride = try allocator.alloc(f64, size);
+	defer allocator.free(buf_stride);
+
+	mandelbrot.computeRegion(params, buf_ref);
+
+	// Run 4 stride workers (each handling 1/4 of rows) — simulates parallel
+	@memset(buf_stride, 0.0);
+	var thread_idx: u32 = 0;
+	while (thread_idx < 4) : (thread_idx += 1) {
+		mandelbrot.computeRowStride(params, buf_stride, thread_idx, 4);
+	}
+
+	try testing.expectEqualSlices(f64, buf_ref, buf_stride);
+}
+
+test "computeRowStride single thread matches computeRegion" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	defer _ = gpa.deinit();
+	const allocator = gpa.allocator();
+
+	const params = mandelbrot.RegionParams{
+		.center_re = -0.5,
+		.center_im = 0.0,
+		.zoom = 1.0,
+		.width = 20,
+		.height = 10,
+		.max_iter = 50,
+		.aspect_ratio = 0.5,
+	};
+
+	const size: usize = 20 * 10;
+	const buf_ref = try allocator.alloc(f64, size);
+	defer allocator.free(buf_ref);
+	const buf_stride = try allocator.alloc(f64, size);
+	defer allocator.free(buf_stride);
+
+	mandelbrot.computeRegion(params, buf_ref);
+	@memset(buf_stride, 0.0);
+	mandelbrot.computeRowStride(params, buf_stride, 0, 1);
+
+	try testing.expectEqualSlices(f64, buf_ref, buf_stride);
+}

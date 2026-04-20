@@ -17,8 +17,8 @@
 ## `src/core/mandelbrot.zig`
 - `computeIterations(c_re, c_im, max_iter)` — f128 escape-time with smooth coloring (n + 1 - log2(log2(|z|))); returns `INTERIOR` (-1.0) for points in the set
 - `computeRegion(params, out)` — fill buffer with iteration counts (vertex semantics: `origin + col*step`)
-- `computeRowBand(params, out, start_row, end_row)` — compute a single row band (for thread splitting)
-- `parallelComputeRegion(params, out)` — split rows across 3 threads for ~1.5x speedup
+- `computeRowStride(params, out, thread_idx, num_threads)` — compute interleaved rows (row i, i+N, i+2N, ...) for balanced parallel load
+- `parallelComputeRegion(params, out, num_threads)` — split rows across N threads using stride-based assignment (auto-detects if num_threads is null); falls back to sequential for tiny heights
 - `computeRegionDirect(level)` — fill a CacheLevel using pointAt (vertex semantics, single-threaded)
 - `computeDoubling(parent, child, ?generation)` — spawn 3 threads to fill odd-col/even-row, even-col/odd-row, odd-col/odd-row patterns of a 2x child; checks generation counter for cancellation
 - `RegionParams` — struct defining viewport for region computation
