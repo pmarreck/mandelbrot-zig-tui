@@ -24,6 +24,7 @@
 - [x] Benchmark regression detection in bm script — ~2026-04-19 20:15 EST
 - [x] Block quadrant glyph mode (2×2 sub-pixel rendering, `g` toggle, `--glyph=blocks`, `MANDELBROT_SUBBLOCK` env var) — ~2026-04-20 EST
 - [x] Animated zoom mode (`--animate`, linear center + log zoom, stats to stderr, non-tty aware for recording) — ~2026-04-20 EST
+- [x] Double-double arithmetic replacing f128 soft-float fallback — ~2026-04-20 EST
 
 ## Performance Evidence
 
@@ -39,7 +40,6 @@ See `benchmarks/results.log` for full history. Summary (Apple M4 Max, 16 cores, 
 Key commits: `b33a57d` (threads), `40007ac` (stride), `12a4a94` (f64 hot loop).
 
 ## Future Enhancements
-- [ ] **Double-double arithmetic for deep-zoom precision** — replace f128 soft-float fallback with DD (two f64 representing hi+lo). Uses hardware f64 throughout, expected 3-10x faster than soft-float f128 on ARM64/x86_64. Gives ~106 bits of mantissa (deep enough for ~10^30 zoom). Keep f128 impl as test ground-truth. Spec reference: docs/superpowers/specs/2026-04-19-perf-optimization-design.md (Optimization 3 section).
 - [ ] **Cardioid/bulb early-exit** — 20-40% fewer iterations in default view (main cardioid and period-2 bulb are provably in the set, skip iteration)
 - [ ] **SIMD vectorization** — 4 pixels at a time via @Vector(4, f64) in the inner loop
 - [ ] **Persistent thread pool** — skip thread spawn overhead per-frame (thread spawn now dominates at sub-ms workloads)

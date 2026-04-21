@@ -18,7 +18,7 @@ An interactive terminal-based Mandelbrot set explorer written in pure Zig, capab
 - **SIGWINCH-responsive** — re-renders on terminal resize without state loss
 
 ### Precision & Performance
-- **Hardware f64 hot loop with f128 fallback** — f64 by default (fast on Apple Silicon / x86_64), automatically falls back to f128 when zoom exceeds 10^13 (beyond f64's pixel-spacing precision). Soft-float f128 is 30-50x slower than hardware f64 on ARM64; we only pay that cost when precision actually demands it.
+- **Hardware f64 hot loop with double-double fallback** — f64 by default (fast on Apple Silicon / x86_64), automatically falls back to double-double (DD) arithmetic when zoom exceeds 10^13. DD represents high-precision numbers as two f64 values (`hi + lo`) using QD-style algorithms (TwoSum, TwoProd via `@mulAdd`), giving ~30 digits of precision using hardware f64 throughout — 3-10x faster than soft-float f128 emulation. f128 stays as test-only ground truth for verifying DD correctness.
 - **Multi-threaded rendering** — auto-detects CPU count (cap 12), stride-based row assignment for balanced load across threads. 30-70x end-to-end speedup over the naive baseline on Apple M4 Max.
 - **Progressive multi-resolution cache** — 5-level pyramid (1x, 2x, 4x, 8x, 16x) with 3-offset parallel doubling in the background. On idle, background threads progressively fill deeper levels so the next 4 zoom-ins are instant cache hits.
 - **Race-free cache invalidation** — generation counter + thread-join barrier; no mutexes, no use-after-free.
@@ -121,16 +121,18 @@ Render a scriptable zoom animation (in or out) between the default view and a fo
 ```
 src/
   core/                    Pure computation (no I/O, no side effects)
-    mandelbrot.zig         f64/f128 escape-time + parallel region fill + 3-offset doubling
+    mandelbrot.zig         f64/DD/f128 escape-time + parallel region fill + 3-offset doubling
+    dd.zig                 Double-double arithmetic (two f64 → ~30-digit precision)
     viewport.zig           Screen↔complex mapping, zoom, pan, adaptive iter
     coloring.zig           Bernstein palette + density chars + quadrant glyphs
     cache.zig              5-level resolution pyramid (CacheLevel + CacheStack)
+    animation.zig          Pure frame interpolation (linear center + log zoom)
   tui/                     I/O adapter layer
-    terminal.zig           Raw mode, mouse (SGR 1002/1006), SIGWINCH, cursor
+    terminal.zig           Raw mode, mouse (SGR 1002/1006), SIGWINCH, cursor, tty detection
     input.zig              Byte stream → Event parser (pure)
-    renderer.zig           Pure: RenderState + iter_buf → ANSI buffer
+    renderer.zig           Pure: RenderState + iter_buf → ANSI buffer (density + blocks modes)
     pool.zig               Long-lived coordinator thread for background pre-computation
-    app.zig                Event loop + state machine + cache lifecycle
+    app.zig                Event loop + state machine + cache lifecycle + runAnimation
   main.zig                 CLI args, env vars, entry point
 ```
 
@@ -146,10 +148,14 @@ The `core/` modules (`mandelbrot`, `viewport`, `coloring`, `cache`) are pure com
 ### 2. Smooth iteration count for color continuity
 The classic escape-time algorithm produces integer iteration counts that cause visible color banding. The "smooth coloring" formula `n + 1 - log2(log2(|z_n|))` produces a continuous real number that interpolates cleanly across the color palette. This requires raising the bailout radius from 2 to 256 so the log-log term converges cleanly.
 
-### 3. f64 hot loop with f128 fallback (30-70x speedup)
-Apple Silicon (and most ARM64/x86_64) has no hardware `f128`; soft-float emulation is 30-50x slower than hardware `f64`. Since f64 gives ~15 digits of precision — enough for zoom levels up to ~10^13 on a normal-sized terminal — the inner iteration loop dispatches to a comptime-generic implementation parameterized over float type. Above the precision threshold, it falls back to f128 automatically. Cumulative state (center, zoom, step_re) stays in f128 so precision doesn't drift over many pan/zoom operations.
+### 3. f64 hot loop with double-double fallback (30-70x speedup + deep-zoom precision)
+Apple Silicon (and most ARM64/x86_64) has no hardware `f128`; soft-float emulation is 30-50x slower than hardware `f64`. The inner iteration loop uses a comptime-generic implementation (`computeIterationsT`) that dispatches on the float type. Above the f64 precision threshold (~zoom 10^13), it switches to **double-double (DD)** arithmetic instead of f128.
 
-This alone gave roughly 34x sequential speedup (41 ms → 1.2 ms per 200x60 frame).
+DD represents a high-precision number as two f64 values: `value = hi + lo`, where `|hi| >= |lo|` and `lo` carries the roundoff error. Arithmetic operations use QD-style algorithms (Dekker/Knuth TwoSum for addition, TwoProd via `@mulAdd` for multiplication). All ops run on hardware f64 — no soft-float — giving ~106 bits of mantissa (~30 decimal digits), enough for zoom levels up to ~10^30. Testing verifies DD matches f128 (kept as test-only ground truth) within tight epsilon across zoom depths.
+
+Critical detail: `DD.fromF128(x)` converts an f128 to DD while preserving precision (splitting into `hi + lo`). Using `DD.fromF64(@floatCast(x))` instead would truncate to 52 bits before iteration starts, causing adjacent pixels at zoom > 1e15 to quantize to identical DD values regardless of DD's iteration precision.
+
+This alone gave roughly 34x sequential speedup (41 ms → 1.2 ms per 200x60 frame) at shallow zoom, plus deep-zoom capability that's 3-10x faster than the old f128 fallback (~9 ms/frame at zoom 1e16).
 
 ### 4. Progressive multi-resolution pre-computation cache
 A 5-level resolution pyramid keeps Level 0 at display resolution, Level 1 at 2× density, Level 2 at 4×, etc. Each level covers the same complex-plane bounding box with doubled point density. When the user zooms in 2x, what was Level 1 becomes the new Level 0 (instant), and background threads start computing a new Level 4.

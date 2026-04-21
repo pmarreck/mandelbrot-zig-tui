@@ -17,17 +17,28 @@
 - `parseBoolEnv(name)` — case-insensitive parse of true/1/yes/on boolean env vars (used for MANDELBROT_SUBBLOCK)
 - `parseFlagF128`, `parseFlagF64`, `parseFlagU32`, `parseFlagU64`, `parseFlagU16` — CLI value parsers for --flag=VALUE and --flag VALUE syntax
 
+## `src/core/dd.zig`
+- `DD` — double-double struct: `{ hi: f64, lo: f64 }` representing `value = hi + lo` with ~106 bits mantissa (~30 decimal digits)
+- `DD.fromF64(x)` — single f64 input, lo=0
+- `DD.fromF64Pair(hi, lo)` — direct construction from (hi, lo)
+- `DD.fromF128(x)` — **precision-preserving** f128→DD split (essential at deep zoom)
+- `DD.zero()`, `DD.toF64()` — constructor + lossy conversion
+- `DD.add`, `DD.sub`, `DD.neg`, `DD.mul`, `DD.mulScalar` — QD-style arithmetic (TwoSum + TwoProd via `@mulAdd`)
+- `DD.gt`, `DD.lt`, `DD.eq` — lexicographic comparisons (hi first, then lo)
+
 ## `src/core/mandelbrot.zig`
-- `computeIterationsT(comptime T, c_re: T, c_im: T, max_iter)` — generic smooth iteration count over T (f64 or f128); returns `INTERIOR` (-1.0) for points in the set
+- `computeIterationsT(comptime T, c_re: T, c_im: T, max_iter)` — generic smooth iteration count over T (f64, f128, or `dd.DD`); returns `INTERIOR` (-1.0) for points in the set; uses comptime operator dispatch helpers so one body works for all three types
 - `computeIterations(c_re: f64, c_im: f64, max_iter)` — default hardware-fast path (f64, valid to ~10^13 zoom)
-- `computeIterationsF128(c_re: f128, c_im: f128, max_iter)` — precision path for deep zoom (slow soft-float on ARM64/x86_64)
+- `computeIterationsDD(c_re: dd.DD, c_im: dd.DD, max_iter)` — production precision path via double-double (~30 digits, hardware f64)
+- `computeIterationsF128(c_re: f128, c_im: f128, max_iter)` — test-only ground truth for verifying DD correctness
 - `computeRegion(params, out)` — sequential fill (delegates to `computeRowStride(_, _, 0, 1)` so seq and parallel share one dispatching inner loop)
-- `computeRowStride(params, out, thread_idx, num_threads)` — interleaved rows with f64/f128 dispatch based on `params.zoom` vs `F64_THRESHOLD`
+- `computeRowStride(params, out, thread_idx, num_threads)` — interleaved rows with f64/DD dispatch based on `params.zoom` vs `F64_THRESHOLD`
 - `parallelComputeRegion(params, out, ?num_threads)` — spawn N threads running `computeRowStride`; null = auto-detect via `autoThreadCount()` (cap 12)
 - `autoThreadCount()` — `min(max(getCpuCount(), 1), MAX_THREADS=12)`
-- `computeRegionDirect(level)` — fill a CacheLevel; dispatches f64/f128 based on `level.step_re` vs `F64_STEP_THRESHOLD`
-- `computeDoubling(parent, child, ?generation)` — 3 threads fill odd/even/odd-odd offset patterns of a 2x child; offsetWorker internally dispatches f64/f128
+- `computeRegionDirect(level)` — fill a CacheLevel; dispatches f64/DD based on `level.step_re` vs `F64_STEP_THRESHOLD`
+- `computeDoubling(parent, child, ?generation)` — 3 threads fill odd/even/odd-odd offset patterns of a 2x child; offsetWorker internally dispatches f64/DD
 - `resetDispatchCounters() / f64DispatchCount() / ddDispatchCount()` — test-only observability for f64 vs DD-fallback dispatch
+- Comptime helpers `opMul/opAdd/opSub/opMulScalar/opGt/opFromF64/opToF64(T, ...)` — dispatch between primitive operators and DD methods
 - `F64_THRESHOLD` = 1.0e13 (zoom-based cutoff; above this, f64 is unsafe)
 - `F64_STEP_THRESHOLD` = 2.0e-15 (step-based cutoff for cache levels; below this, f64 is unsafe)
 - `MAX_THREADS` = 12 (cap on worker thread count)
