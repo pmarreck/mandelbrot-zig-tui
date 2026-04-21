@@ -7,6 +7,7 @@
 // and fall back to f128 only when zoom/step resolution demands it.
 
 const std = @import("std");
+const dd = @import("dd");
 
 /// Bailout squared. Stored as f64 so both f64 and f128 paths can coerce cleanly.
 const BAILOUT_SQ_F64: f64 = 65536.0; // 256^2
@@ -42,25 +43,71 @@ pub fn f128DispatchCount() u64 {
 	return g_f128_dispatch.load(.acquire);
 }
 
-/// Generic smooth iteration count over float type T (f64 or f128).
+// ── Comptime dispatch helpers ──────────────────────────────────────
+// These inline at compile time: for T=f64/f128 they become primitive
+// operators; for T=dd.DD they call the DD methods. Zero runtime cost.
+
+inline fn opMul(comptime T: type, a: T, b: T) T {
+	if (T == dd.DD) return a.mul(b);
+	return a * b;
+}
+
+inline fn opAdd(comptime T: type, a: T, b: T) T {
+	if (T == dd.DD) return a.add(b);
+	return a + b;
+}
+
+inline fn opSub(comptime T: type, a: T, b: T) T {
+	if (T == dd.DD) return a.sub(b);
+	return a - b;
+}
+
+inline fn opMulScalar(comptime T: type, a: T, x: f64) T {
+	if (T == dd.DD) return a.mulScalar(x);
+	return a * @as(T, @floatCast(x));
+}
+
+inline fn opGt(comptime T: type, a: T, b: T) bool {
+	if (T == dd.DD) return a.gt(b);
+	return a > b;
+}
+
+inline fn opFromF64(comptime T: type, x: f64) T {
+	if (T == dd.DD) return dd.DD.fromF64(x);
+	return @as(T, @floatCast(x));
+}
+
+inline fn opToF64(comptime T: type, a: T) f64 {
+	if (T == dd.DD) return a.toF64();
+	return @as(f64, @floatCast(a));
+}
+
+/// Generic smooth iteration count over float type T (f64, f128, or dd.DD).
 /// Returns f64 (smooth iteration count is always returned as f64 for storage).
 /// Interior points return INTERIOR (-1.0).
+/// Uses comptime operator dispatch so a single function body works for all three types.
 pub fn computeIterationsT(comptime T: type, c_re: T, c_im: T, max_iter: u32) f64 {
-	var z_re: T = 0.0;
-	var z_im: T = 0.0;
-	const bailout_sq: T = @as(T, BAILOUT_SQ_F64);
+	var z_re: T = opFromF64(T, 0.0);
+	var z_im: T = opFromF64(T, 0.0);
+	const bailout_sq: T = opFromF64(T, BAILOUT_SQ_F64);
 	var i: u32 = 0;
 	while (i < max_iter) : (i += 1) {
-		const z_re2 = z_re * z_re;
-		const z_im2 = z_im * z_im;
-		if (z_re2 + z_im2 > bailout_sq) {
-			const mod_sq: f64 = @floatCast(z_re2 + z_im2);
+		const z_re2 = opMul(T, z_re, z_re);
+		const z_im2 = opMul(T, z_im, z_im);
+		const sum_sq = opAdd(T, z_re2, z_im2);
+		if (opGt(T, sum_sq, bailout_sq)) {
+			const mod_sq: f64 = opToF64(T, sum_sq);
 			const log_zn = @log(mod_sq) / 2.0;
 			const nu = @log(log_zn / @log(2.0)) / @log(2.0);
 			return @as(f64, @floatFromInt(i)) + 1.0 - nu;
 		}
-		z_im = 2.0 * z_re * z_im + c_im;
-		z_re = z_re2 - z_im2 + c_re;
+		// z_im = 2.0 * z_re * z_im + c_im
+		const two_z_re = opMulScalar(T, z_re, 2.0);
+		const product = opMul(T, two_z_re, z_im);
+		z_im = opAdd(T, product, c_im);
+		// z_re = z_re2 - z_im2 + c_re
+		const diff = opSub(T, z_re2, z_im2);
+		z_re = opAdd(T, diff, c_re);
 	}
 	return INTERIOR;
 }
@@ -74,6 +121,12 @@ pub fn computeIterations(c_re: f64, c_im: f64, max_iter: u32) f64 {
 /// Precision path: use when zoom exceeds ~10^13.
 pub fn computeIterationsF128(c_re: f128, c_im: f128, max_iter: u32) f64 {
 	return computeIterationsT(f128, c_re, c_im, max_iter);
+}
+
+/// DD precision path: use when zoom exceeds F64_THRESHOLD (~1e13).
+/// ~30 digits of precision via hardware f64 throughout.
+pub fn computeIterationsDD(c_re: dd.DD, c_im: dd.DD, max_iter: u32) f64 {
+	return computeIterationsT(dd.DD, c_re, c_im, max_iter);
 }
 
 /// Parameters for computing a rectangular region of the complex plane.

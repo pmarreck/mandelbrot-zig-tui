@@ -24,6 +24,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/core/mandelbrot.zig"),
         .imports = &.{
             .{ .name = "cache", .module = cache_mod },
+            .{ .name = "dd", .module = dd_mod },
         },
     });
     const coloring_mod = b.createModule(.{
