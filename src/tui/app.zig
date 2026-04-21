@@ -224,6 +224,8 @@ pub fn runAnimation(
 ) !void {
 	var state = initial_state;
 
+	const is_tty = terminal.stdinIsTty();
+
 	// Cache + scheduler owned here (same as run())
 	var cache_stack = cache_mod.CacheStack.init();
 	defer cache_stack.deinit(allocator);
@@ -233,19 +235,21 @@ pub fn runAnimation(
 
 	const stdout_file = std.fs.File.stdout();
 
-	try terminal.enterRawMode();
-	errdefer terminal.exitRawMode();
-
 	var stdout_buf: [16384]u8 = undefined;
 	var stdout_writer = stdout_file.writer(&stdout_buf);
 	const stdout = &stdout_writer.interface;
 
-	try terminal.hideCursor(stdout);
-	try terminal.enableMouseTracking(stdout);
-	try terminal.clearScreen(stdout);
-	try stdout.flush();
+	if (is_tty) {
+		try terminal.enterRawMode();
+		errdefer terminal.exitRawMode();
 
-	terminal.setupSigwinch();
+		try terminal.hideCursor(stdout);
+		try terminal.enableMouseTracking(stdout);
+		try terminal.clearScreen(stdout);
+		try stdout.flush();
+
+		terminal.setupSigwinch();
+	}
 
 	// Animation loop
 	const target_frame_ns: u64 = 1_000_000_000 / config.fps;
@@ -309,22 +313,27 @@ pub fn runAnimation(
 	});
 	try stderr.flush();
 
-	// Hold on final frame if requested
+	// Hold on final frame if requested (honored in both tty and non-tty modes)
 	if (config.exit_after and config.hold_ms > 0) {
 		std.Thread.sleep(config.hold_ms * std.time.ns_per_ms);
 	}
 
-	if (config.exit_after) {
-		try terminal.disableMouseTracking(stdout);
-		try terminal.showCursor(stdout);
-		try terminal.clearScreen(stdout);
-		try stdout.flush();
-		terminal.exitRawMode();
+	// Non-tty mode: always exit (no interactive mode possible without stdin)
+	// tty mode: exit only if exit_after set, otherwise fall through to interactive
+	if (!is_tty or config.exit_after) {
+		if (is_tty) {
+			try terminal.disableMouseTracking(stdout);
+			try terminal.showCursor(stdout);
+			try terminal.clearScreen(stdout);
+			try stdout.flush();
+			terminal.exitRawMode();
+		} else {
+			try stdout.flush();
+		}
 		return;
 	}
 
-	// Fall through to interactive event loop using the final state.
-	// Inline the loop from run() since terminal is already set up.
+	// Fall through to interactive event loop using the final state (tty-only path).
 	var read_buf: [256]u8 = undefined;
 	const stdin_file = std.fs.File.stdin();
 

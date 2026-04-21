@@ -142,6 +142,49 @@ else
 	fail "--glyph=density overrides MANDELBROT_SUBBLOCK=1" "rc=$rc"
 fi
 
+# Test: --animate runs to completion with minimal params
+output=$("$BINARY" --animate --duration 0.3 --fps 10 --zoom-to 10 --exit-after 2>&1 >/dev/null)
+rc=$?
+if [ "$rc" -eq 0 ] && echo "$output" | grep -q "Animation complete:"; then
+	pass "--animate runs to completion with stats"
+else
+	fail "--animate runs to completion with stats" "rc=$rc"
+fi
+
+# Test: --animate without --duration exits with error code 2
+"$BINARY" --animate --zoom-to 10 --exit-after >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 2 ]; then
+	pass "--animate without --duration exits with code 2"
+else
+	fail "--animate without --duration exits with code 2" "rc=$rc"
+fi
+
+# Test: --hold-ms requires --exit-after
+"$BINARY" --animate --duration 0.1 --zoom-to 10 --hold-ms 50 >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 2 ]; then
+	pass "--hold-ms without --exit-after exits with code 2"
+else
+	fail "--hold-ms without --exit-after exits with code 2" "rc=$rc"
+fi
+
+# Test: --animate with --hold-ms adds time to total wall-clock (only on systems where `date +%s%N` works)
+if date +%s%N 2>/dev/null | grep -q '[0-9]\{19,\}'; then
+	start_ns=$(date +%s%N)
+	"$BINARY" --animate --duration 0.1 --fps 10 --zoom-to 10 --exit-after --hold-ms 300 >/dev/null 2>&1
+	end_ns=$(date +%s%N)
+	elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
+	if [ "$elapsed_ms" -ge 300 ]; then
+		pass "--hold-ms adds delay to total wall-clock"
+	else
+		fail "--hold-ms adds delay to total wall-clock" "elapsed=${elapsed_ms}ms (expected >= 300ms)"
+	fi
+else
+	# macOS's BSD date doesn't support %N. Skip this test.
+	pass "--hold-ms adds delay (skipped: date +%s%N unsupported)"
+fi
+
 echo ""
 echo "CLI Tests: $passed/$tests passed, $errors failed"
 exit "$errors"

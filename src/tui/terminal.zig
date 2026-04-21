@@ -116,6 +116,14 @@ pub const TermSize = struct {
 };
 
 /// Query the terminal dimensions via ioctl(TIOCGWINSZ).
+/// Returns true if stdin is connected to a terminal (tty).
+/// Used by animation mode to decide whether to enter raw mode.
+pub fn stdinIsTty() bool {
+	const fd = std.fs.File.stdin().handle;
+	return std.posix.isatty(fd);
+}
+
+
 pub fn getTermSizePosix() !TermSize {
 	var ws = posix.winsize{
 		.row = 0,
@@ -151,6 +159,7 @@ test "terminal module compiles" {
 		_ = &setupSigwinch;
 		_ = &checkAndClearResizeFlag;
 		_ = &getTermSizePosix;
+		_ = &stdinIsTty;
 	}
 }
 
