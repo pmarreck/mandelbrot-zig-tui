@@ -54,3 +54,53 @@ test "DD and f128 agree across zoom depths" {
 		}
 	}
 }
+
+test "DD dispatches when zoom exceeds F64_THRESHOLD" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	defer _ = gpa.deinit();
+	const allocator = gpa.allocator();
+
+	mandelbrot.resetDispatchCounters();
+
+	const params = mandelbrot.RegionParams{
+		.center_re = -0.7435,
+		.center_im = 0.1314,
+		.zoom = 1.0e14,
+		.width = 20,
+		.height = 10,
+		.max_iter = 50,
+		.aspect_ratio = 0.5,
+	};
+	const buf = try allocator.alloc(f64, 20 * 10);
+	defer allocator.free(buf);
+
+	mandelbrot.computeRowStride(params, buf, 0, 1);
+
+	try testing.expect(mandelbrot.ddDispatchCount() > 0);
+	try testing.expectEqual(@as(u64, 0), mandelbrot.f64DispatchCount());
+}
+
+test "f64 dispatches when zoom at or below F64_THRESHOLD" {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	defer _ = gpa.deinit();
+	const allocator = gpa.allocator();
+
+	mandelbrot.resetDispatchCounters();
+
+	const params = mandelbrot.RegionParams{
+		.center_re = -0.5,
+		.center_im = 0.0,
+		.zoom = 1.0,
+		.width = 20,
+		.height = 10,
+		.max_iter = 50,
+		.aspect_ratio = 0.5,
+	};
+	const buf = try allocator.alloc(f64, 20 * 10);
+	defer allocator.free(buf);
+
+	mandelbrot.computeRowStride(params, buf, 0, 1);
+
+	try testing.expect(mandelbrot.f64DispatchCount() > 0);
+	try testing.expectEqual(@as(u64, 0), mandelbrot.ddDispatchCount());
+}

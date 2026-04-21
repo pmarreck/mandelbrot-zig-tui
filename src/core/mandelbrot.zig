@@ -203,14 +203,25 @@ pub fn computeRowStride(params: RegionParams, out: []f64, thread_idx: u32, num_t
 		}
 	} else {
 		_ = g_dd_dispatch.fetchAdd(1, .monotonic);
+		// DD path: precision ~30 digits via hardware f64 throughout.
+		// fromF128 preserves the full f128 precision of viewport scalars in
+		// DD's hi+lo pair — essential at deep zoom where pixel spacing is
+		// below f64 precision.
+		const start_re_dd = dd.DD.fromF128(start_re);
+		const start_im_dd = dd.DD.fromF128(start_im);
+		const step_re_dd = dd.DD.fromF128(step_re);
+		const step_im_dd = dd.DD.fromF128(step_im);
+
 		var row: u32 = thread_idx;
 		while (row < params.height) : (row += num_threads) {
+			const row_f64: f64 = @floatFromInt(row);
+			const c_im_dd = start_im_dd.add(step_im_dd.mulScalar(row_f64));
 			var col: u32 = 0;
 			while (col < params.width) : (col += 1) {
-				const c_re = start_re + @as(f128, @floatFromInt(col)) * step_re;
-				const c_im = start_im + @as(f128, @floatFromInt(row)) * step_im;
+				const col_f64: f64 = @floatFromInt(col);
+				const c_re_dd = start_re_dd.add(step_re_dd.mulScalar(col_f64));
 				const idx = row * @as(u32, params.width) + col;
-				out[idx] = computeIterationsF128(c_re, c_im, params.max_iter);
+				out[idx] = computeIterationsDD(c_re_dd, c_im_dd, params.max_iter);
 			}
 		}
 	}
@@ -260,14 +271,16 @@ pub fn computeRegionDirect(level: *cache_mod.CacheLevel) void {
 			}
 		}
 	} else {
-		// f128 path
 		_ = g_dd_dispatch.fetchAdd(1, .monotonic);
 		var row: u32 = 0;
 		while (row < level.height) : (row += 1) {
 			var col: u32 = 0;
 			while (col < level.width) : (col += 1) {
 				const pt = level.pointAt(col, row);
-				level.set(col, row, computeIterationsF128(pt.re, pt.im, level.max_iter));
+				// pt.re and pt.im are f128 — fromF128 preserves precision.
+				const c_re_dd = dd.DD.fromF128(pt.re);
+				const c_im_dd = dd.DD.fromF128(pt.im);
+				level.set(col, row, computeIterationsDD(c_re_dd, c_im_dd, level.max_iter));
 			}
 		}
 	}
@@ -302,7 +315,9 @@ fn offsetWorker(args: OffsetWorkerArgs) void {
 				const c_im: f64 = @floatCast(pt.im);
 				args.child.set(col, row, computeIterations(c_re, c_im, args.child.max_iter));
 			} else {
-				args.child.set(col, row, computeIterationsF128(pt.re, pt.im, args.child.max_iter));
+				const c_re_dd = dd.DD.fromF128(pt.re);
+				const c_im_dd = dd.DD.fromF128(pt.im);
+				args.child.set(col, row, computeIterationsDD(c_re_dd, c_im_dd, args.child.max_iter));
 			}
 		}
 	}
