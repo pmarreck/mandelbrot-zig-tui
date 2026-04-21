@@ -96,84 +96,7 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 		}
 
 		if (state.needs_redraw) {
-			const render_height: u16 = if (state.show_info and state.term_height > 1)
-				state.term_height - 1
-			else
-				state.term_height;
-
-			// Sub-pixel multiplier: 1 for density mode, 2 for blocks mode
-			const sub_mul: u16 = switch (state.glyph_mode) {
-				.density => 1,
-				.blocks => 2,
-			};
-			const buf_width: u16 = state.term_width * sub_mul;
-			const buf_height: u16 = render_height * sub_mul;
-			const pixel_count = @as(usize, buf_width) * @as(usize, buf_height);
-
-			const iter_buf = try allocator.alloc(f64, pixel_count);
-			defer allocator.free(iter_buf);
-
-			// Check cache Level 0 first
-			var cache_hit = false;
-			if (cache_stack.levels[0]) |level| {
-				if (level.complete and level.width == buf_width and level.height == buf_height) {
-					@memcpy(iter_buf, level.data[0..pixel_count]);
-					cache_hit = true;
-				}
-			}
-
-			if (!cache_hit) {
-				scheduler.stop();
-				cache_stack.invalidateAll(allocator);
-
-				try cache_stack.initForViewport(
-					allocator,
-					state.center_re,
-					state.center_im,
-					state.zoom,
-					buf_width,
-					buf_height,
-					state.max_iter,
-					ASPECT_RATIO,
-				);
-
-				try mandelbrot.parallelComputeRegion(.{
-					.center_re = state.center_re,
-					.center_im = state.center_im,
-					.zoom = state.zoom,
-					.width = buf_width,
-					.height = buf_height,
-					.max_iter = state.max_iter,
-					.aspect_ratio = ASPECT_RATIO,
-				}, iter_buf, null);
-
-				if (cache_stack.levels[0]) |*level| {
-					@memcpy(level.data, iter_buf);
-					level.complete = true;
-				}
-			}
-
-			// Dispatch to the correct renderer based on glyph mode
-			const render_state = renderer.RenderState{
-				.center_re = state.center_re,
-				.center_im = state.center_im,
-				.zoom = state.zoom,
-				.max_iter = state.max_iter,
-				.show_info = state.show_info,
-				.glyph_mode = state.glyph_mode,
-			};
-
-			const frame = switch (state.glyph_mode) {
-				.density => try renderer.renderFrameFromBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator),
-				.blocks => try renderer.renderFrameFromBlocksBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator),
-			};
-			defer allocator.free(frame);
-
-			try stdout.writeAll(frame);
-			try stdout.flush();
-			state.needs_redraw = false;
-
-			scheduler.requestWork();
+			try renderOneFrame(&state, &cache_stack, &scheduler, allocator, stdout);
 		}
 
 		const n = stdin_file.read(&read_buf) catch 0;
@@ -197,6 +120,97 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 	try terminal.clearScreen(stdout);
 	try stdout.flush();
 	terminal.exitRawMode();
+}
+
+/// Render a single frame using the current state. Shared between interactive
+/// mode (run) and animation mode (runAnimation). Handles cache lookup, parallel
+/// compute on miss, dispatch to density/blocks renderer, writeAll, flush, and
+/// kick scheduler for background pre-computation.
+pub fn renderOneFrame(
+	state: *AppState,
+	cache_stack: *cache_mod.CacheStack,
+	scheduler: *pool.BackgroundScheduler,
+	allocator: std.mem.Allocator,
+	stdout: *std.Io.Writer,
+) !void {
+	const render_height: u16 = if (state.show_info and state.term_height > 1)
+		state.term_height - 1
+	else
+		state.term_height;
+
+	// Sub-pixel multiplier: 1 for density mode, 2 for blocks mode
+	const sub_mul: u16 = switch (state.glyph_mode) {
+		.density => 1,
+		.blocks => 2,
+	};
+	const buf_width: u16 = state.term_width * sub_mul;
+	const buf_height: u16 = render_height * sub_mul;
+	const pixel_count = @as(usize, buf_width) * @as(usize, buf_height);
+
+	const iter_buf = try allocator.alloc(f64, pixel_count);
+	defer allocator.free(iter_buf);
+
+	// Check cache Level 0 first
+	var cache_hit = false;
+	if (cache_stack.levels[0]) |level| {
+		if (level.complete and level.width == buf_width and level.height == buf_height) {
+			@memcpy(iter_buf, level.data[0..pixel_count]);
+			cache_hit = true;
+		}
+	}
+
+	if (!cache_hit) {
+		scheduler.stop();
+		cache_stack.invalidateAll(allocator);
+
+		try cache_stack.initForViewport(
+			allocator,
+			state.center_re,
+			state.center_im,
+			state.zoom,
+			buf_width,
+			buf_height,
+			state.max_iter,
+			ASPECT_RATIO,
+		);
+
+		try mandelbrot.parallelComputeRegion(.{
+			.center_re = state.center_re,
+			.center_im = state.center_im,
+			.zoom = state.zoom,
+			.width = buf_width,
+			.height = buf_height,
+			.max_iter = state.max_iter,
+			.aspect_ratio = ASPECT_RATIO,
+		}, iter_buf, null);
+
+		if (cache_stack.levels[0]) |*level| {
+			@memcpy(level.data, iter_buf);
+			level.complete = true;
+		}
+	}
+
+	// Dispatch to the correct renderer based on glyph mode
+	const render_state = renderer.RenderState{
+		.center_re = state.center_re,
+		.center_im = state.center_im,
+		.zoom = state.zoom,
+		.max_iter = state.max_iter,
+		.show_info = state.show_info,
+		.glyph_mode = state.glyph_mode,
+	};
+
+	const frame = switch (state.glyph_mode) {
+		.density => try renderer.renderFrameFromBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator),
+		.blocks => try renderer.renderFrameFromBlocksBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator),
+	};
+	defer allocator.free(frame);
+
+	try stdout.writeAll(frame);
+	try stdout.flush();
+	state.needs_redraw = false;
+
+	scheduler.requestWork();
 }
 
 /// Returns true if any viewport-defining field differs between two AppStates.
