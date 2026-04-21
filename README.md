@@ -92,6 +92,30 @@ Environment variables (view injection / bookmarking):
   MANDELBROT_SUBBLOCK    Set to true/1/yes/on to start in blocks mode
 ```
 
+### Animation mode
+
+Render a scriptable zoom animation (in or out) between the default view and a focal point. Ideal for producing demo GIFs with `asciinema` or `vhs`.
+
+```bash
+# Zoom INTO the seahorse valley over 5 seconds at 30fps, pause 2s on final frame, then exit
+./mandelbrot \
+    --animate \
+    --center-re -0.7435 \
+    --center-im 0.1314 \
+    --zoom-to 1e6 \
+    --duration 5 \
+    --fps 30 \
+    --glyph=blocks \
+    --exit-after \
+    --hold-ms 2000
+```
+
+- Linear interpolation of center coordinates + logarithmic interpolation of zoom produces perceptually uniform visual motion
+- Zoom-in direction (`--zoom-from < --zoom-to`) starts at the default view and ends at the focal point; zoom-out flips the direction
+- Animation detects non-tty stdout and skips terminal setup, making it pipeable to recording tools or files
+- Frame timing stats print to stderr at the end
+- Without `--exit-after`, the animation drops into interactive mode at the final state so you can continue exploring
+
 ## Architecture
 
 ```

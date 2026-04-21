@@ -23,6 +23,7 @@
 - [x] Perf: --bench-zoom-sequence CLI flag + hyperfine-friendly --bench-quiet — ~2026-04-19 21:30 EST
 - [x] Benchmark regression detection in bm script — ~2026-04-19 20:15 EST
 - [x] Block quadrant glyph mode (2×2 sub-pixel rendering, `g` toggle, `--glyph=blocks`, `MANDELBROT_SUBBLOCK` env var) — ~2026-04-20 EST
+- [x] Animated zoom mode (`--animate`, linear center + log zoom, stats to stderr, non-tty aware for recording) — ~2026-04-20 EST
 
 ## Performance Evidence
 

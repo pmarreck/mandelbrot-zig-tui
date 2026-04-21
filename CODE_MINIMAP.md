@@ -15,6 +15,7 @@
 - `parseU32Env()` — parse u32 from environment variable
 - `parseU16Env()` — parse u16 from environment variable
 - `parseBoolEnv(name)` — case-insensitive parse of true/1/yes/on boolean env vars (used for MANDELBROT_SUBBLOCK)
+- `parseFlagF128`, `parseFlagF64`, `parseFlagU32`, `parseFlagU64`, `parseFlagU16` — CLI value parsers for --flag=VALUE and --flag VALUE syntax
 
 ## `src/core/mandelbrot.zig`
 - `computeIterationsT(comptime T, c_re: T, c_im: T, max_iter)` — generic smooth iteration count over T (f64 or f128); returns `INTERIOR` (-1.0) for points in the set
@@ -100,12 +101,19 @@
   - `.cancel()` — bump generation (does not join coordinator)
   - `.generation` — atomic u32 for worker cancellation checks
 
+## `src/core/animation.zig`
+- `validate(raw: RawAnimationFlags) ValidationError!AnimationConfig` — resolves defaults, returns error for bad configs
+- `frameAt(cfg, frame_idx) AnimationFrame` — linear center + log zoom interpolation
+- `RawAnimationFlags`, `AnimationConfig`, `AnimationFrame`, `ValidationError`
+
 ## `src/tui/app.zig`
-- `run(initial_state, allocator)` — main event loop; owns CacheStack + BackgroundScheduler; cache-aware render, stop-before-mutate pattern for thread safety
+- `run(initial_state, allocator)` — interactive event loop; owns CacheStack + BackgroundScheduler
+- `runAnimation(config, initial_state, allocator)` — animation mode; detects tty/non-tty, paces frames, stats to stderr, falls through to interactive in tty mode
+- `renderOneFrame(state, cache_stack, scheduler, allocator, stdout)` — shared render step used by both modes
 - `processEvent(state, event)` — pure state transition function
 - `viewportChanged(old, new)` — detects when cache invalidation is needed
 - `defaultState()` — initial AppState with standard defaults
-- `AppState` — struct: center, zoom, iters, info, dimensions, flags, drag state
+- `AppState` — struct: center, zoom, iters, info, dimensions, flags, drag state, glyph mode
 
 ## `tests/unit/test_mandelbrot.zig` — escape-time + region computation tests (9 tests)
 ## `tests/unit/test_viewport.zig` — coordinate mapping, zoom, pan, adaptive iter tests (7 tests)
