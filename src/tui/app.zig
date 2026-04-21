@@ -11,6 +11,7 @@ const cache_mod = @import("cache");
 const mandelbrot = @import("mandelbrot");
 const pool = @import("pool");
 const coloring = @import("coloring");
+const animation = @import("animation");
 
 const ZOOM_FACTOR: f128 = 2.0;
 const ASPECT_RATIO: f64 = 0.5;
@@ -211,6 +212,155 @@ pub fn renderOneFrame(
 	state.needs_redraw = false;
 
 	scheduler.requestWork();
+}
+
+/// Animation mode: render `config.num_frames` progressive zoom frames,
+/// pace to target fps, then either exit or fall through to interactive mode.
+/// Reuses renderOneFrame so density/blocks/cache/scheduler all work identically to interactive.
+pub fn runAnimation(
+	config: animation.AnimationConfig,
+	initial_state: AppState,
+	allocator: std.mem.Allocator,
+) !void {
+	var state = initial_state;
+
+	// Cache + scheduler owned here (same as run())
+	var cache_stack = cache_mod.CacheStack.init();
+	defer cache_stack.deinit(allocator);
+
+	var scheduler = pool.BackgroundScheduler.init(allocator, &cache_stack);
+	defer scheduler.stop();
+
+	const stdout_file = std.fs.File.stdout();
+
+	try terminal.enterRawMode();
+	errdefer terminal.exitRawMode();
+
+	var stdout_buf: [16384]u8 = undefined;
+	var stdout_writer = stdout_file.writer(&stdout_buf);
+	const stdout = &stdout_writer.interface;
+
+	try terminal.hideCursor(stdout);
+	try terminal.enableMouseTracking(stdout);
+	try terminal.clearScreen(stdout);
+	try stdout.flush();
+
+	terminal.setupSigwinch();
+
+	// Animation loop
+	const target_frame_ns: u64 = 1_000_000_000 / config.fps;
+
+	var stderr_buf: [4096]u8 = undefined;
+	var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+	const stderr = &stderr_writer.interface;
+
+	// Frame timing stats
+	var total_elapsed_ns: u64 = 0;
+	var min_frame_ns: u64 = std.math.maxInt(u64);
+	var max_frame_ns: u64 = 0;
+	var overrun_count: u32 = 0;
+
+	const overall_start = std.time.nanoTimestamp();
+
+	var frame_idx: u32 = 0;
+	while (frame_idx < config.num_frames) : (frame_idx += 1) {
+		const frame_start = std.time.nanoTimestamp();
+
+		const params = animation.frameAt(config, frame_idx);
+		state.center_re = params.center_re;
+		state.center_im = params.center_im;
+		state.zoom = params.zoom;
+		state.max_iter = params.max_iter;
+		state.needs_redraw = true;
+
+		try renderOneFrame(&state, &cache_stack, &scheduler, allocator, stdout);
+
+		const elapsed_ns: i128 = std.time.nanoTimestamp() - frame_start;
+		const elapsed_u64: u64 = if (elapsed_ns > 0) @intCast(elapsed_ns) else 0;
+		total_elapsed_ns += elapsed_u64;
+		if (elapsed_u64 < min_frame_ns) min_frame_ns = elapsed_u64;
+		if (elapsed_u64 > max_frame_ns) max_frame_ns = elapsed_u64;
+
+		const target_ns: i128 = @intCast(target_frame_ns);
+		if (elapsed_ns < target_ns) {
+			std.Thread.sleep(@intCast(target_ns - elapsed_ns));
+		} else {
+			overrun_count += 1;
+		}
+	}
+
+	const overall_elapsed: i128 = std.time.nanoTimestamp() - overall_start;
+	const overall_elapsed_sec: f64 = @as(f64, @floatFromInt(@as(u64, @intCast(overall_elapsed)))) / 1_000_000_000.0;
+	const target_duration_sec: f64 = @as(f64, @floatFromInt(config.num_frames)) / @as(f64, @floatFromInt(config.fps));
+	const mean_frame_ms: f64 = @as(f64, @floatFromInt(total_elapsed_ns)) / @as(f64, @floatFromInt(config.num_frames)) / 1_000_000.0;
+	const min_frame_ms: f64 = @as(f64, @floatFromInt(min_frame_ns)) / 1_000_000.0;
+	const max_frame_ms: f64 = @as(f64, @floatFromInt(max_frame_ns)) / 1_000_000.0;
+	const target_frame_ms: f64 = @as(f64, @floatFromInt(target_frame_ns)) / 1_000_000.0;
+	const overrun_pct: f64 = @as(f64, @floatFromInt(overrun_count)) / @as(f64, @floatFromInt(config.num_frames)) * 100.0;
+
+	try stderr.print("Animation complete: {d} frames in {d:.2}s (target {d:.2}s, {d} fps)\n", .{
+		config.num_frames, overall_elapsed_sec, target_duration_sec, config.fps,
+	});
+	try stderr.print("  Min: {d:.1} ms   Max: {d:.1} ms   Mean: {d:.1} ms\n", .{
+		min_frame_ms, max_frame_ms, mean_frame_ms,
+	});
+	try stderr.print("  >= target ({d:.1} ms): {d} frames ({d:.0}%)\n", .{
+		target_frame_ms, overrun_count, overrun_pct,
+	});
+	try stderr.flush();
+
+	// Hold on final frame if requested
+	if (config.exit_after and config.hold_ms > 0) {
+		std.Thread.sleep(config.hold_ms * std.time.ns_per_ms);
+	}
+
+	if (config.exit_after) {
+		try terminal.disableMouseTracking(stdout);
+		try terminal.showCursor(stdout);
+		try terminal.clearScreen(stdout);
+		try stdout.flush();
+		terminal.exitRawMode();
+		return;
+	}
+
+	// Fall through to interactive event loop using the final state.
+	// Inline the loop from run() since terminal is already set up.
+	var read_buf: [256]u8 = undefined;
+	const stdin_file = std.fs.File.stdin();
+
+	while (state.running) {
+		if (terminal.checkAndClearResizeFlag()) {
+			if (terminal.getTermSizePosix()) |size| {
+				state.term_width = size.cols;
+				state.term_height = size.rows;
+				state.needs_redraw = true;
+				scheduler.stop();
+				cache_stack.invalidateAll(allocator);
+			} else |_| {}
+		}
+
+		if (state.needs_redraw) {
+			try renderOneFrame(&state, &cache_stack, &scheduler, allocator, stdout);
+		}
+
+		const n = stdin_file.read(&read_buf) catch 0;
+		if (n == 0) continue;
+
+		const event = input.parseEvent(read_buf[0..n]);
+		const new_state = processEvent(state, event);
+
+		if (viewportChanged(state, new_state)) {
+			scheduler.stop();
+			cache_stack.invalidateAll(allocator);
+		}
+		state = new_state;
+	}
+
+	try terminal.disableMouseTracking(stdout);
+	try terminal.showCursor(stdout);
+	try terminal.clearScreen(stdout);
+	try stdout.flush();
+	terminal.exitRawMode();
 }
 
 /// Returns true if any viewport-defining field differs between two AppStates.
