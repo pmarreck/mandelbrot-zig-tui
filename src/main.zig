@@ -5,6 +5,7 @@ const viewport = @import("viewport");
 const renderer = @import("renderer");
 const mandelbrot = @import("mandelbrot");
 const coloring = @import("coloring");
+const animation = @import("animation");
 
 const version = "0.1.0";
 
@@ -29,6 +30,34 @@ pub fn main() !void {
 	var bench_zoom_n: ?u32 = null;
 	var bench_quiet = false;
 	var cli_glyph_mode: ?coloring.GlyphMode = null;
+	var raw_anim = animation.RawAnimationFlags{};
+	var cli_center_re: ?f128 = null;
+	var cli_center_im: ?f128 = null;
+	var cli_zoom: ?f128 = null;
+	var cli_max_iter: ?u32 = null;
+	var cli_cols: ?u16 = null;
+	var cli_rows: ?u16 = null;
+
+	// Helper: if arg starts with prefix ("--flag="), return the value part.
+	// Otherwise if arg == prefix without =, consume the next arg as the value.
+	// Returns null if the flag doesn't match.
+	const ArgHelper = struct {
+		fn match(arg_val: []const u8, flag_name: []const u8, args_slice: [][:0]u8, idx: *usize) ?[]const u8 {
+			// Try --flag=VALUE
+			var eq_prefix_buf: [64]u8 = undefined;
+			const eq_prefix = std.fmt.bufPrint(&eq_prefix_buf, "{s}=", .{flag_name}) catch return null;
+			if (std.mem.startsWith(u8, arg_val, eq_prefix)) {
+				return arg_val[eq_prefix.len..];
+			}
+			// Try --flag VALUE
+			if (std.mem.eql(u8, arg_val, flag_name)) {
+				if (idx.* + 1 >= args_slice.len) return null;
+				idx.* += 1;
+				return args_slice[idx.*];
+			}
+			return null;
+		}
+	};
 
 	var i: usize = 1;
 	while (i < args.len) : (i += 1) {
@@ -49,6 +78,25 @@ pub fn main() !void {
 				\\  --bench-zoom-sequence N    Render N zoom-in frames for perf testing, print timing, exit
 				\\  --bench-quiet              With --bench-zoom-sequence: suppress per-frame output
 				\\  --glyph=MODE               Initial glyph mode: density (default) or blocks
+				\\  --center-re F              Override MANDELBROT_CENTER_RE
+				\\  --center-im F              Override MANDELBROT_CENTER_IM
+				\\  --zoom F                   Override MANDELBROT_ZOOM
+				\\  --max-iter N               Override MANDELBROT_MAX_ITER
+				\\  --cols N                   Override MANDELBROT_COLS
+				\\  --rows N                   Override MANDELBROT_ROWS
+				\\
+				\\Animation (all require --animate):
+				\\  --animate                  Enable animation mode
+				\\  --zoom-from F              Starting zoom (default 1.0)
+				\\  --zoom-to F                Ending zoom (required; must differ from from)
+				\\  --duration SEC             Total animation duration in seconds (required)
+				\\  --fps N                    Frames per second (default 30)
+				\\  --exit-after               Exit when animation completes (default: drop to interactive)
+				\\  --hold-ms N                With --exit-after: pause N ms on final frame
+				\\  --start-center-re F        Override start center real coord
+				\\  --start-center-im F        Override start center imag coord
+				\\  --end-center-re F          Override end center real coord
+				\\  --end-center-im F          Override end center imag coord
 				\\  --no-color                 Disable ANSI colors
 				\\  --no-ansi                  Disable all ANSI escapes
 				\\  --simple                   Plain ASCII mode (no color, ANSI, or emoji)
@@ -124,6 +172,97 @@ pub fn main() !void {
 			}
 			continue;
 		}
+		// Animation boolean flags
+		if (std.mem.eql(u8, arg, "--animate")) {
+			raw_anim.animate = true;
+			continue;
+		}
+		if (std.mem.eql(u8, arg, "--exit-after")) {
+			raw_anim.exit_after = true;
+			continue;
+		}
+		// Animation value flags
+		if (ArgHelper.match(arg, "--zoom-from", args, &i)) |v| {
+			raw_anim.zoom_from = parseFlagF128(v) orelse {
+				try stderr.writeAll("--zoom-from must be a number\n");
+				try stderr.flush();
+				return error.BadCliArg;
+			};
+			continue;
+		}
+		if (ArgHelper.match(arg, "--zoom-to", args, &i)) |v| {
+			raw_anim.zoom_to = parseFlagF128(v) orelse {
+				try stderr.writeAll("--zoom-to must be a number\n");
+				try stderr.flush();
+				return error.BadCliArg;
+			};
+			continue;
+		}
+		if (ArgHelper.match(arg, "--duration", args, &i)) |v| {
+			raw_anim.duration_sec = parseFlagF64(v) orelse {
+				try stderr.writeAll("--duration must be a number in seconds\n");
+				try stderr.flush();
+				return error.BadCliArg;
+			};
+			continue;
+		}
+		if (ArgHelper.match(arg, "--fps", args, &i)) |v| {
+			raw_anim.fps = parseFlagU32(v) orelse {
+				try stderr.writeAll("--fps must be a positive integer\n");
+				try stderr.flush();
+				return error.BadCliArg;
+			};
+			continue;
+		}
+		if (ArgHelper.match(arg, "--hold-ms", args, &i)) |v| {
+			raw_anim.hold_ms = parseFlagU64(v) orelse {
+				try stderr.writeAll("--hold-ms must be a non-negative integer\n");
+				try stderr.flush();
+				return error.BadCliArg;
+			};
+			continue;
+		}
+		if (ArgHelper.match(arg, "--start-center-re", args, &i)) |v| {
+			raw_anim.start_center_re = parseFlagF128(v);
+			continue;
+		}
+		if (ArgHelper.match(arg, "--start-center-im", args, &i)) |v| {
+			raw_anim.start_center_im = parseFlagF128(v);
+			continue;
+		}
+		if (ArgHelper.match(arg, "--end-center-re", args, &i)) |v| {
+			raw_anim.end_center_re = parseFlagF128(v);
+			continue;
+		}
+		if (ArgHelper.match(arg, "--end-center-im", args, &i)) |v| {
+			raw_anim.end_center_im = parseFlagF128(v);
+			continue;
+		}
+		// General-purpose viewport overrides
+		if (ArgHelper.match(arg, "--center-re", args, &i)) |v| {
+			cli_center_re = parseFlagF128(v);
+			continue;
+		}
+		if (ArgHelper.match(arg, "--center-im", args, &i)) |v| {
+			cli_center_im = parseFlagF128(v);
+			continue;
+		}
+		if (ArgHelper.match(arg, "--zoom", args, &i)) |v| {
+			cli_zoom = parseFlagF128(v);
+			continue;
+		}
+		if (ArgHelper.match(arg, "--max-iter", args, &i)) |v| {
+			cli_max_iter = parseFlagU32(v);
+			continue;
+		}
+		if (ArgHelper.match(arg, "--cols", args, &i)) |v| {
+			cli_cols = parseFlagU16(v);
+			continue;
+		}
+		if (ArgHelper.match(arg, "--rows", args, &i)) |v| {
+			cli_rows = parseFlagU16(v);
+			continue;
+		}
 	}
 
 	var state = app.defaultState();
@@ -154,6 +293,41 @@ pub fn main() !void {
 	}
 	if (cli_glyph_mode) |m| {
 		state.glyph_mode = m;
+	}
+
+	// CLI flags override env vars
+	if (cli_center_re) |v| state.center_re = v;
+	if (cli_center_im) |v| state.center_im = v;
+	if (cli_zoom) |v| state.zoom = v;
+	if (cli_max_iter) |v| {
+		state.max_iter = v;
+		state.base_iter = v;
+	}
+	if (cli_cols) |v| state.term_width = v;
+	if (cli_rows) |v| state.term_height = v;
+
+	// Populate animation's focal coords + base_iter from the resolved state
+	raw_anim.focal_re = state.center_re;
+	raw_anim.focal_im = state.center_im;
+	raw_anim.base_iter = state.base_iter;
+
+	// If --animate specified, validate and run animation mode
+	if (raw_anim.animate) {
+		const config = animation.validate(raw_anim) catch |err| {
+			const msg = switch (err) {
+				error.MissingDuration => "animation requires --duration SEC\n",
+				error.ZoomFromEqualsTo => "--zoom-from and --zoom-to must differ\n",
+				error.HoldWithoutExit => "--hold-ms requires --exit-after\n",
+				error.BadFps => "--fps must be a positive integer\n",
+				error.BadDuration => "--duration must be positive\n",
+				error.AnimationFlagsWithoutAnimate => "internal error: animate=true but validation says otherwise\n",
+			};
+			try stderr.writeAll(msg);
+			try stderr.flush();
+			std.process.exit(2);
+		};
+		try app.runAnimation(config, state, allocator);
+		return;
 	}
 
 	if (bench_zoom_n) |n| {
@@ -208,6 +382,28 @@ pub fn main() !void {
 	try app.run(state, allocator);
 }
 
+/// Parse an f128 value from a CLI flag string. Parses as f64 then widens to f128
+/// since Zig 0.15 parseFloat doesn't support f128 directly.
+fn parseFlagF128(val: []const u8) ?f128 {
+	const f = std.fmt.parseFloat(f64, val) catch return null;
+	return @as(f128, f);
+}
+
+fn parseFlagF64(val: []const u8) ?f64 {
+	return std.fmt.parseFloat(f64, val) catch null;
+}
+
+fn parseFlagU32(val: []const u8) ?u32 {
+	return std.fmt.parseInt(u32, val, 10) catch null;
+}
+
+fn parseFlagU64(val: []const u8) ?u64 {
+	return std.fmt.parseInt(u64, val, 10) catch null;
+}
+
+fn parseFlagU16(val: []const u8) ?u16 {
+	return std.fmt.parseInt(u16, val, 10) catch null;
+}
 fn parseF128Env(name: []const u8) ?f128 {
 	const val = std.posix.getenv(name) orelse return null;
 	const f = std.fmt.parseFloat(f64, val) catch return null;
