@@ -81,6 +81,18 @@ pub const DD = struct {
 		return .{ .hi = hi, .lo = lo };
 	}
 
+	/// Precision-preserving construction from f128.
+	/// Splits the value: hi = top ~52 bits, lo = next ~52 bits of roundoff.
+	/// Retains ~104 of f128's 112 mantissa bits (~31 of 33 decimal digits).
+	/// Critical for correctness at deep zoom: using `fromF64(@floatCast(x))`
+	/// instead would truncate to 52 bits before DD iteration even starts,
+	/// causing adjacent pixels at zoom > 1e15 to quantize to identical coords.
+	pub fn fromF128(x: f128) DD {
+		const hi: f64 = @floatCast(x);
+		const lo: f64 = @floatCast(x - @as(f128, hi));
+		return .{ .hi = hi, .lo = lo };
+	}
+
 	pub fn zero() DD {
 		return .{ .hi = 0.0, .lo = 0.0 };
 	}
@@ -176,6 +188,29 @@ test "DD.fromF64(x).toF64() round-trip for normal values" {
 		const d = dd.DD.fromF64(x);
 		try testing.expectEqual(x, d.toF64());
 	}
+}
+
+test "DD.fromF128 preserves precision beyond f64" {
+	// Construct an f128 value whose low bits would be lost in a simple f64 cast.
+	// 1.0 + 1e-20 cannot be represented in f64 (spacing ~2.2e-16 near 1.0) but fits in f128.
+	const x: f128 = 1.0 + @as(f128, 1.0e-20);
+	const d = dd.DD.fromF128(x);
+	// DD should preserve the 1e-20 term in its lo component
+	try testing.expect(d.hi == 1.0);
+	try testing.expect(d.lo > 5e-21);
+	try testing.expect(d.lo < 2e-20);
+}
+
+test "DD.fromF128 round-trips back through DD arithmetic" {
+	// Two nearby f128 values, differing below f64 precision.
+	// Converted via fromF128, their DD difference should equal the true f128 difference.
+	const a_f128: f128 = 1.0;
+	const b_f128: f128 = 1.0 + @as(f128, 5.0e-18);
+	const a_dd = dd.DD.fromF128(a_f128);
+	const b_dd = dd.DD.fromF128(b_f128);
+	const diff_dd = b_dd.sub(a_dd).toF64();
+	// Should recover ~5e-18, NOT 0 (which a simple f64 cast would give)
+	try testing.expectApproxEqRel(@as(f64, 5.0e-18), diff_dd, 1e-10);
 }
 
 test "DD.zero() is neutral element for addition" {
@@ -741,11 +776,13 @@ Find the `else` branch in `computeRowStride` that currently calls `computeIterat
 	} else {
 		_ = g_dd_dispatch.fetchAdd(1, .monotonic);
 		// DD path: precision ~30 digits via hardware f64 throughout.
-		// Convert f128 viewport scalars to DD once per thread.
-		const start_re_dd = dd.DD.fromF64(@floatCast(start_re));
-		const start_im_dd = dd.DD.fromF64(@floatCast(start_im));
-		const step_re_dd = dd.DD.fromF64(@floatCast(step_re));
-		const step_im_dd = dd.DD.fromF64(@floatCast(step_im));
+		// fromF128 preserves the full f128 precision of viewport scalars in
+		// DD's hi+lo pair — essential at deep zoom where pixel spacing is
+		// below f64 precision.
+		const start_re_dd = dd.DD.fromF128(start_re);
+		const start_im_dd = dd.DD.fromF128(start_im);
+		const step_re_dd = dd.DD.fromF128(step_re);
+		const step_im_dd = dd.DD.fromF128(step_im);
 
 		var row: u32 = thread_idx;
 		while (row < params.height) : (row += num_threads) {
@@ -775,9 +812,9 @@ Find the branch that calls `computeIterationsF128` on cache levels. Replace:
 			var col: u32 = 0;
 			while (col < level.width) : (col += 1) {
 				const pt = level.pointAt(col, row);
-				// pt.re and pt.im are f128. Convert to DD.
-				const c_re_dd = dd.DD.fromF64(@floatCast(pt.re));
-				const c_im_dd = dd.DD.fromF64(@floatCast(pt.im));
+				// pt.re and pt.im are f128 — fromF128 preserves precision.
+				const c_re_dd = dd.DD.fromF128(pt.re);
+				const c_im_dd = dd.DD.fromF128(pt.im);
 				level.set(col, row, computeIterationsDD(c_re_dd, c_im_dd, level.max_iter));
 			}
 		}
@@ -802,8 +839,8 @@ fn offsetWorker(args: OffsetWorkerArgs) void {
 				const c_im: f64 = @floatCast(pt.im);
 				args.child.set(col, row, computeIterations(c_re, c_im, args.child.max_iter));
 			} else {
-				const c_re_dd = dd.DD.fromF64(@floatCast(pt.re));
-				const c_im_dd = dd.DD.fromF64(@floatCast(pt.im));
+				const c_re_dd = dd.DD.fromF128(pt.re);
+				const c_im_dd = dd.DD.fromF128(pt.im);
 				args.child.set(col, row, computeIterationsDD(c_re_dd, c_im_dd, args.child.max_iter));
 			}
 		}
@@ -987,7 +1024,7 @@ Add a new section under `src/core/`:
 ```markdown
 ## `src/core/dd.zig`
 - `DD` — struct: two f64 values representing a high-precision number (`value = hi + lo`)
-- `DD.fromF64(x)`, `DD.fromF64Pair(hi, lo)`, `DD.zero()` — constructors
+- `DD.fromF64(x)`, `DD.fromF64Pair(hi, lo)`, `DD.fromF128(x)`, `DD.zero()` — constructors (fromF128 preserves f128 precision across the conversion)
 - `DD.toF64()` — lossy conversion to f64
 - `DD.add(a, b)` — TwoSum-based addition, no ordering assumption
 - `DD.sub(a, b)`, `DD.neg(a)` — subtraction + negation

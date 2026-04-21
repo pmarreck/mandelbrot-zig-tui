@@ -21,6 +21,7 @@ pub const DD = struct {
 
     pub fn fromF64(x: f64) DD;
     pub fn fromF64Pair(hi: f64, lo: f64) DD;  // assumes |hi| >= |lo|, lo is roundoff
+    pub fn fromF128(x: f128) DD;              // precision-preserving: splits f128 into hi + lo pair
     pub fn zero() DD;
     pub fn toF64(self: DD) f64;               // lossy — used for comparisons against hardware scalars and final coloring
 
@@ -38,6 +39,7 @@ pub const DD = struct {
 
 ### Implementation notes
 
+- `fromF128` preserves precision across the f128→DD boundary by splitting the f128 value into `hi` (top ~52 mantissa bits) and `lo` (next ~52 bits of roundoff). `hi = @floatCast(x)`, `lo = @floatCast(x - @as(f128, hi))`. This retains ~104 of f128's 112 mantissa bits (~31 of 33 decimal digits) — the 6-bit loss at the bottom is well below display resolution. **Critical for correctness**: using `fromF64(@floatCast(...))` instead would throw away ~18 digits before iteration begins, defeating DD's precision advantage and causing adjacent pixels at deep zoom to quantize to identical coordinates.
 - `add` uses **TwoSum** (Knuth): no ordering precondition, 6 FLOPs. Returns `(s, e)` where `s = a + b` and `e` is the roundoff error: `s + e == a + b` exactly.
 - `mul` uses **TwoProd** via `@mulAdd(f64, a, b, -a*b)`. With hardware FMA: 2 FLOPs. Returns the exact product as a DD.
 - `mulScalar` is a specialization of `mul` that skips the f64×f64 → DD promotion cost when one operand is already a plain f64.
@@ -203,7 +205,7 @@ if (params.zoom <= F64_THRESHOLD) {
 }
 ```
 
-Note: `start_re` as f128 is converted to DD via `DD.fromF64(@floatCast(start_re))`. This loses some precision in the conversion (f128 → f64), but DD's `hi` + `lo` can hold ~30 digits of the original f128 if we carefully split it. For this first pass we accept the conversion loss since the user-supplied center is already f128 from CLI/env and f64-equivalent precision for DD's `hi` is fine — DD's job is to preserve precision *during iteration*, not to faithfully represent the input f128 literal bit-for-bit.
+Note: `start_re` as f128 is converted to DD via `DD.fromF128(start_re)` which preserves the full f128 precision in DD's `hi + lo` pair. This is essential at deep zoom: at zoom 1e16, pixel spacing (~2e-18) is below f64's precision. If we converted via `DD.fromF64(@floatCast(start_re))` first, adjacent pixels would quantize to identical DD values and produce visible banding regardless of how good the DD iteration arithmetic is. `fromF128` guarantees DD starts with the same precision the viewport math was computed at.
 
 Analogous changes in `computeRegionDirect` (uses `level.step_re`, etc.) and `offsetWorker` (operates on a CacheLevel's points).
 
