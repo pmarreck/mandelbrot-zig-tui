@@ -15,32 +15,31 @@ const BAILOUT_SQ_F64: f64 = 65536.0; // 256^2
 /// Sentinel value for interior points (in the Mandelbrot set).
 pub const INTERIOR: f64 = -1.0;
 
-/// Zoom threshold above which f128 precision is required.
-/// Derived from f64's relative precision (2.2e-16) vs pixel spacing (4/zoom/width).
-/// At zoom 10^13 on a 200-wide terminal, pixel spacing is ~2e-15 — close to f64's limit.
-pub const F128_DISPATCH_THRESHOLD: f128 = 1.0e13;
+/// Zoom threshold above which f64 precision is insufficient.
+/// Derived from f64's relative precision (~2.2e-16) vs pixel spacing (4/zoom/width).
+/// Above this threshold, use the DD path for ~30 digits of precision.
+pub const F64_THRESHOLD: f128 = 1.0e13;
 
-/// Step-size threshold below which f128 precision is required.
-/// Complementary to F128_DISPATCH_THRESHOLD (zoom-based). Equivalent when
-/// terminal is ~200 wide: step = 4/zoom/200, so step < 2e-15 ⇔ zoom > 1e13.
-pub const F128_STEP_THRESHOLD: f128 = 2.0e-15;
+/// Step-size threshold below which f64 precision is insufficient.
+/// Complementary to F64_THRESHOLD (zoom-based). Equivalent when terminal is ~200 wide.
+pub const F64_STEP_THRESHOLD: f128 = 2.0e-15;
 
 /// Test-only dispatch counters. Incremented once per call to computeRowStride,
 /// computeRegionDirect, and offsetWorker — not once per pixel.
 var g_f64_dispatch = std.atomic.Value(u64).init(0);
-var g_f128_dispatch = std.atomic.Value(u64).init(0);
+var g_dd_dispatch = std.atomic.Value(u64).init(0);
 
 pub fn resetDispatchCounters() void {
 	g_f64_dispatch.store(0, .release);
-	g_f128_dispatch.store(0, .release);
+	g_dd_dispatch.store(0, .release);
 }
 
 pub fn f64DispatchCount() u64 {
 	return g_f64_dispatch.load(.acquire);
 }
 
-pub fn f128DispatchCount() u64 {
-	return g_f128_dispatch.load(.acquire);
+pub fn ddDispatchCount() u64 {
+	return g_dd_dispatch.load(.acquire);
 }
 
 // ── Comptime dispatch helpers ──────────────────────────────────────
@@ -182,7 +181,7 @@ pub fn computeRowStride(params: RegionParams, out: []f64, thread_idx: u32, num_t
 
 	// Dispatch decision: below threshold use f64 (fast hardware),
 	// above threshold use f128 (slow soft-float, but required for precision).
-	if (params.zoom <= F128_DISPATCH_THRESHOLD) {
+	if (params.zoom <= F64_THRESHOLD) {
 		_ = g_f64_dispatch.fetchAdd(1, .monotonic);
 		// Precompute f64 versions of row-invariant scalars for the inner loop
 		const start_re_f64: f64 = @floatCast(start_re);
@@ -203,7 +202,7 @@ pub fn computeRowStride(params: RegionParams, out: []f64, thread_idx: u32, num_t
 			}
 		}
 	} else {
-		_ = g_f128_dispatch.fetchAdd(1, .monotonic);
+		_ = g_dd_dispatch.fetchAdd(1, .monotonic);
 		var row: u32 = thread_idx;
 		while (row < params.height) : (row += num_threads) {
 			var col: u32 = 0;
@@ -247,7 +246,7 @@ const cache_mod = @import("cache");
 /// Dispatches between hardware-fast f64 and soft-float f128 based on step size.
 /// Sets level.complete = true on return.
 pub fn computeRegionDirect(level: *cache_mod.CacheLevel) void {
-	if (level.step_re > F128_STEP_THRESHOLD) {
+	if (level.step_re > F64_STEP_THRESHOLD) {
 		// f64 path
 		_ = g_f64_dispatch.fetchAdd(1, .monotonic);
 		var row: u32 = 0;
@@ -262,7 +261,7 @@ pub fn computeRegionDirect(level: *cache_mod.CacheLevel) void {
 		}
 	} else {
 		// f128 path
-		_ = g_f128_dispatch.fetchAdd(1, .monotonic);
+		_ = g_dd_dispatch.fetchAdd(1, .monotonic);
 		var row: u32 = 0;
 		while (row < level.height) : (row += 1) {
 			var col: u32 = 0;
@@ -288,7 +287,7 @@ const OffsetWorkerArgs = struct {
 /// Each thread writes to rows starting at row_start with stride 2,
 /// columns starting at col_start with stride 2.
 fn offsetWorker(args: OffsetWorkerArgs) void {
-	const use_f64 = args.child.step_re > F128_STEP_THRESHOLD;
+	const use_f64 = args.child.step_re > F64_STEP_THRESHOLD;
 	var row: u32 = args.row_start;
 	while (row < args.child.height) : (row += 2) {
 		// Check cancellation every row

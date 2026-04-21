@@ -160,7 +160,7 @@ test "computeRegionDirect fills a CacheLevel correctly" {
 		var c: u32 = 0;
 		while (c < 8) : (c += 1) {
 			const pt = level.pointAt(c, r);
-			// level.step_re = 0.25 > F128_STEP_THRESHOLD, so computeRegionDirect uses the f64 path.
+			// level.step_re = 0.25 > F64_STEP_THRESHOLD, so computeRegionDirect uses the f64 path.
 			const expected = mandelbrot.computeIterations(@as(f64, @floatCast(pt.re)), @as(f64, @floatCast(pt.im)), 100);
 			try testing.expectEqual(expected, level.get(c, r));
 		}
@@ -453,10 +453,10 @@ test "f64 dispatch counter increments on shallow zoom" {
 	mandelbrot.computeRowStride(params, buf, 0, 1);
 
 	try testing.expect(mandelbrot.f64DispatchCount() > 0);
-	try testing.expectEqual(@as(u64, 0), mandelbrot.f128DispatchCount());
+	try testing.expectEqual(@as(u64, 0), mandelbrot.ddDispatchCount());
 }
 
-test "f128 dispatch counter increments on deep zoom" {
+test "dd dispatch counter increments on deep zoom" {
 	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
@@ -478,6 +478,6 @@ test "f128 dispatch counter increments on deep zoom" {
 
 	mandelbrot.computeRowStride(params, buf, 0, 1);
 
-	try testing.expect(mandelbrot.f128DispatchCount() > 0);
+	try testing.expect(mandelbrot.ddDispatchCount() > 0);
 	try testing.expectEqual(@as(u64, 0), mandelbrot.f64DispatchCount());
 }

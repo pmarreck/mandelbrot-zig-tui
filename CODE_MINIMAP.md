@@ -22,14 +22,14 @@
 - `computeIterations(c_re: f64, c_im: f64, max_iter)` — default hardware-fast path (f64, valid to ~10^13 zoom)
 - `computeIterationsF128(c_re: f128, c_im: f128, max_iter)` — precision path for deep zoom (slow soft-float on ARM64/x86_64)
 - `computeRegion(params, out)` — sequential fill (delegates to `computeRowStride(_, _, 0, 1)` so seq and parallel share one dispatching inner loop)
-- `computeRowStride(params, out, thread_idx, num_threads)` — interleaved rows with f64/f128 dispatch based on `params.zoom` vs `F128_DISPATCH_THRESHOLD`
+- `computeRowStride(params, out, thread_idx, num_threads)` — interleaved rows with f64/f128 dispatch based on `params.zoom` vs `F64_THRESHOLD`
 - `parallelComputeRegion(params, out, ?num_threads)` — spawn N threads running `computeRowStride`; null = auto-detect via `autoThreadCount()` (cap 12)
 - `autoThreadCount()` — `min(max(getCpuCount(), 1), MAX_THREADS=12)`
-- `computeRegionDirect(level)` — fill a CacheLevel; dispatches f64/f128 based on `level.step_re` vs `F128_STEP_THRESHOLD`
+- `computeRegionDirect(level)` — fill a CacheLevel; dispatches f64/f128 based on `level.step_re` vs `F64_STEP_THRESHOLD`
 - `computeDoubling(parent, child, ?generation)` — 3 threads fill odd/even/odd-odd offset patterns of a 2x child; offsetWorker internally dispatches f64/f128
-- `resetDispatchCounters() / f64DispatchCount() / f128DispatchCount()` — test-only observability for f64 vs f128 dispatch
-- `F128_DISPATCH_THRESHOLD` = 1.0e13 (zoom-based cutoff)
-- `F128_STEP_THRESHOLD` = 2.0e-15 (step-based cutoff for cache levels)
+- `resetDispatchCounters() / f64DispatchCount() / ddDispatchCount()` — test-only observability for f64 vs DD-fallback dispatch
+- `F64_THRESHOLD` = 1.0e13 (zoom-based cutoff; above this, f64 is unsafe)
+- `F64_STEP_THRESHOLD` = 2.0e-15 (step-based cutoff for cache levels; below this, f64 is unsafe)
 - `MAX_THREADS` = 12 (cap on worker thread count)
 - `RegionParams` — struct defining viewport for region computation
 - `INTERIOR` — sentinel value for points in the set (-1.0)
