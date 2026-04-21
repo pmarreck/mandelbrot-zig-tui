@@ -17,6 +17,9 @@ pub fn build(b: *std.Build) void {
     const animation_mod = b.createModule(.{
         .root_source_file = b.path("src/core/animation.zig"),
     });
+    const dd_mod = b.createModule(.{
+        .root_source_file = b.path("src/core/dd.zig"),
+    });
     const mandelbrot_mod = b.createModule(.{
         .root_source_file = b.path("src/core/mandelbrot.zig"),
         .imports = &.{
@@ -257,6 +260,20 @@ pub fn build(b: *std.Build) void {
     });
     const run_animation_tests = b.addRunArtifact(animation_tests);
     test_step.dependOn(&run_animation_tests.step);
+
+    // core/dd tests
+    const dd_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/test_dd.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "dd", .module = dd_mod },
+            },
+        }),
+    });
+    const run_dd_tests = b.addRunArtifact(dd_tests);
+    test_step.dependOn(&run_dd_tests.step);
 
     // Benchmarks (always ReleaseFast, per CLAUDE.md rule that benchmarks
     // must never run in Debug mode).
