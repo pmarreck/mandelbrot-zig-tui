@@ -276,6 +276,21 @@ pub fn build(b: *std.Build) void {
     const run_dd_tests = b.addRunArtifact(dd_tests);
     test_step.dependOn(&run_dd_tests.step);
 
+    // mandelbrot × DD equivalence tests
+    const mandelbrot_dd_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/test_mandelbrot_dd.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "mandelbrot", .module = mandelbrot_mod },
+                .{ .name = "dd", .module = dd_mod },
+            },
+        }),
+    });
+    const run_mandelbrot_dd_tests = b.addRunArtifact(mandelbrot_dd_tests);
+    test_step.dependOn(&run_mandelbrot_dd_tests.step);
+
     // Benchmarks (always ReleaseFast, per CLAUDE.md rule that benchmarks
     // must never run in Debug mode).
     const bench_exe = b.addExecutable(.{
