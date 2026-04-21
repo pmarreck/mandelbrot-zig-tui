@@ -121,7 +121,18 @@ pub fn main() !void {
 		.aspect_ratio = 0.5,
 	}, N);
 
-	const results = [_]BenchResult{ shallow, deep, small };
+	// Ultra-deep: zoom past F64_THRESHOLD (1e13) forces DD dispatch
+	const ultra_deep = try benchmarkScenario(allocator, "Ultra-deep (zoom=1e16)", .{
+		.center_re = -0.7435,
+		.center_im = 0.1314,
+		.zoom = 1.0e16,
+		.width = 200,
+		.height = 60,
+		.max_iter = 1000,
+		.aspect_ratio = 0.5,
+	}, N);
+
+	const results = [_]BenchResult{ shallow, deep, small, ultra_deep };
 	for (results) |r| {
 		try stderr.print("  {s}: {d}x{d}, iter={d}, zoom={d}, N={d}\n", .{
 			r.scenario, r.width, r.height, r.max_iter, @as(f64, @floatCast(r.zoom)), N,
