@@ -151,10 +151,31 @@ pub fn renderOneFrame(
 	const iter_buf = try allocator.alloc(f64, pixel_count);
 	defer allocator.free(iter_buf);
 
-	// Check cache Level 0 first
+	// Check cache Level 0 first. We compare the cache level's stored origin/step
+	// against expected values for the current viewport — if those match bit-for-bit,
+	// the cache holds the right data. Dimensions alone aren't enough (animation
+	// mode reuses the same dimensions across many different viewports).
 	var cache_hit = false;
 	if (cache_stack.levels[0]) |level| {
-		if (level.complete and level.width == buf_width and level.height == buf_height) {
+		const w: f128 = @floatFromInt(buf_width);
+		const h: f128 = @floatFromInt(buf_height);
+		const aspect: f128 = @floatCast(ASPECT_RATIO);
+		const expected_range_re: f128 = 4.0 / state.zoom;
+		const expected_range_im: f128 = expected_range_re * (h / w) / aspect;
+		const expected_origin_re: f128 = state.center_re - expected_range_re / 2.0;
+		const expected_origin_im: f128 = state.center_im - expected_range_im / 2.0;
+		const expected_step_re: f128 = expected_range_re / w;
+		const expected_step_im: f128 = expected_range_im / h;
+
+		if (level.complete and
+			level.width == buf_width and
+			level.height == buf_height and
+			level.max_iter == state.max_iter and
+			level.origin_re == expected_origin_re and
+			level.origin_im == expected_origin_im and
+			level.step_re == expected_step_re and
+			level.step_im == expected_step_im)
+		{
 			@memcpy(iter_buf, level.data[0..pixel_count]);
 			cache_hit = true;
 		}
