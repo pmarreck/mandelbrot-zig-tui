@@ -122,8 +122,8 @@ Other interesting zoom targets to try:
 | Triple spiral    | `-0.088`         | `0.654`         | `1e4` |
 | West bulb        | `-1.25066`       | `0.02012`       | `1e4` |
 
-- Linear interpolation of center coordinates + logarithmic interpolation of zoom produces perceptually uniform visual motion
-- Zoom-in direction (`--zoom-from < --zoom-to`) starts at the default view and ends at the focal point; zoom-out flips the direction
+- By default the camera stays locked on the focal point for the entire animation (matches standard fractal-zoom video style). Use `--start-center-re/im` and `--end-center-re/im` to opt into a moving camera that pans across the plane.
+- Zoom interpolation is logarithmic (geometric) so each frame multiplies zoom by a constant ratio, producing perceptually uniform motion. Center interpolation is linear (and a no-op in the default fixed-center case).
 - Animation detects non-tty stdout and skips terminal setup, making it pipeable to recording tools or files
 - Frame timing stats print to stderr at the end
 - Without `--exit-after`, the animation drops into interactive mode at the final state so you can continue exploring

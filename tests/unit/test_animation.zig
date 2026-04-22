@@ -110,7 +110,7 @@ test "validate bad duration (zero) returns BadDuration" {
 	try testing.expectError(animation.ValidationError.BadDuration, animation.validate(raw));
 }
 
-test "validate zoom-in defaults: start_center = (-0.5, 0), end_center = focal" {
+test "validate zoom-in defaults: both centers lock on focal (camera stays fixed)" {
 	const raw = animation.RawAnimationFlags{
 		.animate = true,
 		.duration_sec = 1.0,
@@ -120,13 +120,14 @@ test "validate zoom-in defaults: start_center = (-0.5, 0), end_center = focal" {
 		.focal_im = 0.1314,
 	};
 	const cfg = try animation.validate(raw);
-	try testing.expectEqual(@as(f128, -0.5), cfg.start_center_re);
-	try testing.expectEqual(@as(f128, 0.0), cfg.start_center_im);
+	// Default: camera locked on focal throughout — matches fractal-zoom video style
+	try testing.expectEqual(@as(f128, -0.7435), cfg.start_center_re);
+	try testing.expectEqual(@as(f128, 0.1314), cfg.start_center_im);
 	try testing.expectEqual(@as(f128, -0.7435), cfg.end_center_re);
 	try testing.expectEqual(@as(f128, 0.1314), cfg.end_center_im);
 }
 
-test "validate zoom-out defaults: start_center = focal, end_center = (-0.5, 0)" {
+test "validate zoom-out defaults: both centers lock on focal (camera stays fixed)" {
 	const raw = animation.RawAnimationFlags{
 		.animate = true,
 		.duration_sec = 1.0,
@@ -136,10 +137,11 @@ test "validate zoom-out defaults: start_center = focal, end_center = (-0.5, 0)" 
 		.focal_im = 0.1314,
 	};
 	const cfg = try animation.validate(raw);
+	// Default: camera locked on focal throughout — matches fractal-zoom video style
 	try testing.expectEqual(@as(f128, -0.7435), cfg.start_center_re);
 	try testing.expectEqual(@as(f128, 0.1314), cfg.start_center_im);
-	try testing.expectEqual(@as(f128, -0.5), cfg.end_center_re);
-	try testing.expectEqual(@as(f128, 0.0), cfg.end_center_im);
+	try testing.expectEqual(@as(f128, -0.7435), cfg.end_center_re);
+	try testing.expectEqual(@as(f128, 0.1314), cfg.end_center_im);
 }
 
 test "validate explicit start/end center overrides win over defaults" {

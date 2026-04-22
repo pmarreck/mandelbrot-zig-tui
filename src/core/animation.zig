@@ -125,17 +125,15 @@ pub fn validate(raw: RawAnimationFlags) ValidationError!AnimationConfig {
 	const focal_re = raw.focal_re orelse DEFAULT_CENTER_RE;
 	const focal_im = raw.focal_im orelse DEFAULT_CENTER_IM;
 
-	// Resolve start/end centers based on zoom direction + explicit overrides
-	const zoom_in = zoom_from < zoom_to;
-	const implicit_start_re: f128 = if (zoom_in) DEFAULT_CENTER_RE else focal_re;
-	const implicit_start_im: f128 = if (zoom_in) DEFAULT_CENTER_IM else focal_im;
-	const implicit_end_re: f128 = if (zoom_in) focal_re else DEFAULT_CENTER_RE;
-	const implicit_end_im: f128 = if (zoom_in) focal_im else DEFAULT_CENTER_IM;
-
-	const start_center_re = raw.start_center_re orelse implicit_start_re;
-	const start_center_im = raw.start_center_im orelse implicit_start_im;
-	const end_center_re = raw.end_center_re orelse implicit_end_re;
-	const end_center_im = raw.end_center_im orelse implicit_end_im;
+	// Default: lock the camera on the focal point for the entire animation.
+	// This matches standard fractal-zoom video style — the target stays visible
+	// in the center at all zoom levels. User can override via explicit
+	// --start-center-re/im + --end-center-re/im flags to pan across the plane.
+	// zoom_in/zoom_out direction is still honored by the zoom interpolation.
+	const start_center_re = raw.start_center_re orelse focal_re;
+	const start_center_im = raw.start_center_im orelse focal_im;
+	const end_center_re = raw.end_center_re orelse focal_re;
+	const end_center_im = raw.end_center_im orelse focal_im;
 
 	// Compute num_frames (round-half-up)
 	const raw_frames = duration_sec * @as(f64, @floatFromInt(fps));
