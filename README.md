@@ -97,18 +97,30 @@ Environment variables (view injection / bookmarking):
 Render a scriptable zoom animation (in or out) between the default view and a focal point. Ideal for producing demo GIFs with `asciinema` or `vhs`.
 
 ```bash
-# Zoom INTO the seahorse valley over 5 seconds at 30fps, pause 2s on final frame, then exit
+# Zoom INTO a mini-mandelbrot (self-similar copy of the whole set) over 6s at 30fps,
+# pause 3s on final frame, then exit.
 ./mandelbrot \
     --animate \
-    --center-re -0.7435 \
-    --center-im 0.1314 \
+    --center-re -1.7693831791955150 \
+    --center-im  0.0042368479187367 \
     --zoom-to 1e6 \
-    --duration 5 \
+    --duration 6 \
     --fps 30 \
     --glyph=blocks \
     --exit-after \
-    --hold-ms 2000
+    --hold-ms 3000
 ```
+
+Other interesting zoom targets to try:
+
+| Name             | `--center-re`    | `--center-im`   | Suggested `--zoom-to` |
+|------------------|------------------|-----------------|------------------------|
+| Mini-mandelbrot  | `-1.7693831791955150` | `0.0042368479187367` | `1e6` |
+| Misiurewicz      | `-0.77568377`    | `0.13646737`    | `1e5` |
+| Seahorse valley  | `-0.74877`       | `0.06513`       | `1e5` |
+| Elephant valley  | `0.275`          | `0.006`         | `1e5` |
+| Triple spiral    | `-0.088`         | `0.654`         | `1e4` |
+| West bulb        | `-1.25066`       | `0.02012`       | `1e4` |
 
 - Linear interpolation of center coordinates + logarithmic interpolation of zoom produces perceptually uniform visual motion
 - Zoom-in direction (`--zoom-from < --zoom-to`) starts at the default view and ends at the focal point; zoom-out flips the direction
