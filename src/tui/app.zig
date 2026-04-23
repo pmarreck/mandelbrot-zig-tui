@@ -323,6 +323,13 @@ pub fn runAnimation(
 	const target_frame_ms: f64 = @as(f64, @floatFromInt(target_frame_ns)) / 1_000_000.0;
 	const overrun_pct: f64 = @as(f64, @floatFromInt(overrun_count)) / @as(f64, @floatFromInt(config.num_frames)) * 100.0;
 
+	// Hold on final frame if requested (honored in both tty and non-tty modes).
+	// This runs BEFORE the stats print so the held frame isn't polluted by
+	// stderr output scrolling underneath it.
+	if (config.exit_after and config.hold_ms > 0) {
+		std.Thread.sleep(config.hold_ms * std.time.ns_per_ms);
+	}
+
 	try stderr.print("Animation complete: {d} frames in {d:.2}s (target {d:.2}s, {d} fps)\n", .{
 		config.num_frames, overall_elapsed_sec, target_duration_sec, config.fps,
 	});
@@ -333,11 +340,6 @@ pub fn runAnimation(
 		target_frame_ms, overrun_count, overrun_pct,
 	});
 	try stderr.flush();
-
-	// Hold on final frame if requested (honored in both tty and non-tty modes)
-	if (config.exit_after and config.hold_ms > 0) {
-		std.Thread.sleep(config.hold_ms * std.time.ns_per_ms);
-	}
 
 	// Non-tty mode: always exit (no interactive mode possible without stdin)
 	// tty mode: exit only if exit_after set, otherwise fall through to interactive
