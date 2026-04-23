@@ -7,6 +7,8 @@ An interactive terminal-based Mandelbrot set explorer written in pure Zig, capab
 
 ![Mandelbrot TUI Screenshot](assets/mandelbrot.png)
 
+[![asciicast](https://asciinema.org/a/966159.svg)](https://asciinema.org/a/966159)
+
 ## Features
 
 ### Rendering
