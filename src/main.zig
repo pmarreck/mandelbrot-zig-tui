@@ -10,7 +10,12 @@ const animation = @import("animation");
 const version = "0.1.0";
 
 pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	// .safety = true keeps GPA's per-allocation tracking on in *all* build
+	// modes, not just Debug. Lets the integration suite assert "no `leaked`
+	// lines on stderr after a stress sequence + clean quit" against the
+	// release binary that's already built. Per-alloc overhead is ~24 B and
+	// the bookkeeping is dwarfed by per-frame compute.
+	var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 

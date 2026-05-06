@@ -236,6 +236,54 @@ else
 fi
 teardown
 
+# ── Test 10: memory leak stress — drive every allocating code path with
+#             a barrage of zoom-in / pan / zoom-out / mode-cycle / modal
+#             actions, then quit cleanly via 'q'. main.zig sets GPA's
+#             safety=true unconditionally, so the `defer gpa.deinit()`
+#             at exit prints any leaks to stderr regardless of build mode.
+#             Test asserts that no "leaked" lines appear.
+SESSION="mandel_test_leak_$$"
+PIPE_PATH=$(mktemp -u "${TMPDIR:-/tmp}/mandel_pipe.XXXXXX")
+mkfifo "$PIPE_PATH"
+STDERR_LOG=$(mktemp "${TMPDIR:-/tmp}/mandel_stderr.XXXXXX")
+tmux new-session -d -s "$SESSION" -x 80 -y 24 \
+	"env MANDELBROT_FRAME_MARKER=1 $BINARY 2>$STDERR_LOG"
+tmux pipe-pane -t "$SESSION" -o "cat > $PIPE_PATH"
+exec 4< <(stdbuf -o0 tr '\033' '\n' < "$PIPE_PATH" | grep --line-buffered '=FRAME=')
+wait_frame || true  # initial render
+
+# Each key triggers exactly one render → one frame marker → wait_frame
+# returns event-driven. Sequence covers: zoom-in (cache extract path),
+# pan (origin shift), zoom-out (cache miss → fresh compute), mode cycle
+# (different buf dimensions → cache realloc + image delete), info-bar
+# toggle, help modal open/close.
+keys=("+" "+" "Up" "Right" "-" "Down" "Left" "+" "g" "+" "g" "-" "i" "i" "?" "Escape" "+" "-")
+for k in "${keys[@]}"; do
+	tmux send-keys -t "$SESSION" "$k"
+	wait_frame || true
+done
+
+# Clean shutdown — triggers `defer gpa.deinit()` which prints any leaks.
+tmux send-keys -t "$SESSION" "q"
+i=0
+while [ $i -lt 50 ]; do
+	if ! tmux has-session -t "$SESSION" 2>/dev/null; then break; fi
+	IFS= read -r -t 0.05 -u 4 _ 2>/dev/null || true
+	i=$((i + 1))
+done
+
+# Process has exited → all stderr writes are kernel-flushed → file final.
+if grep -q "leaked" "$STDERR_LOG" 2>/dev/null; then
+	leak_count=$(grep -c "leaked" "$STDERR_LOG")
+	fail "no GPA leaks after stress sequence" "$leak_count leak warnings"
+	head -10 "$STDERR_LOG" >&2
+else
+	pass "no GPA leaks after stress sequence"
+fi
+
+exec 4<&- 2>/dev/null || true
+rm -f "$PIPE_PATH" "$STDERR_LOG"
+
 echo
 echo "tmux Integration Tests: $PASSED/$((PASSED + FAILED)) passed, $FAILED failed"
 exit $FAILED
