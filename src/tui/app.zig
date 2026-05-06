@@ -345,6 +345,67 @@ pub fn renderOneFrame(
 		try terminal.clearScreen(stdout);
 	}
 
+	// Fast path: redrawing in kitty mode with an unchanged viewport (e.g.
+	// after closing the help modal). The kitty image is still placed in
+	// the terminal — clearScreen wipes cell text but does NOT remove image
+	// placements — so we can skip the entire iter compute → RGB convert →
+	// base64 → ~1 MB retransmit cycle and just redraw the info bar.
+	// The image reappears automatically because cells we don't touch keep
+	// default attributes and let the z=INT32_MIN image show through.
+	if (state.glyph_mode == .kitty and
+		state.last_rendered_glyph_mode == .kitty)
+	{
+		// Verify the viewport is unchanged from the previous kitty render
+		// (same bit-exact match that the Level 0 hit path uses below).
+		if (cache_stack.levels[0]) |level| {
+			const w_check: f128 = @floatFromInt(buf_width);
+			const h_check: f128 = @floatFromInt(buf_height);
+			const aspect_check: f128 = @floatCast(aspect);
+			const exp_range_re: f128 = 4.0 / state.zoom;
+			const exp_range_im: f128 = exp_range_re * (h_check / w_check) / aspect_check;
+			const exp_origin_re: f128 = state.center_re - exp_range_re / 2.0;
+			const exp_origin_im: f128 = state.center_im - exp_range_im / 2.0;
+			const exp_step_re: f128 = exp_range_re / w_check;
+			const exp_step_im: f128 = exp_range_im / h_check;
+
+			if (level.complete and
+				level.width == buf_width and
+				level.height == buf_height and
+				level.max_iter == state.max_iter and
+				level.origin_re == exp_origin_re and
+				level.origin_im == exp_origin_im and
+				level.step_re == exp_step_re and
+				level.step_im == exp_step_im)
+			{
+				// Viewport matches the existing kitty image. Just redraw the
+				// info bar — the image stays placed and visible.
+				const render_state_fast = renderer.RenderState{
+					.center_re = state.center_re,
+					.center_im = state.center_im,
+					.zoom = state.zoom,
+					.max_iter = state.max_iter,
+					.show_info = state.show_info,
+					.glyph_mode = state.glyph_mode,
+				};
+				const info = try renderer.renderKittyInfoBarOnly(
+					render_state_fast,
+					state.term_width,
+					state.term_height,
+					allocator,
+				);
+				defer allocator.free(info);
+				try stdout.writeAll(info);
+				try stdout.flush();
+				state.needs_redraw = false;
+				if (state.frame_marker) {
+					try stdout.writeAll("\x1b_=FRAME=\x1b\\");
+					try stdout.flush();
+				}
+				return;
+			}
+		}
+	}
+
 	// On transition out of the help modal, clear the screen so any modal box
 	// chars left in cells don't show through the next frame. Cell-mode renders
 	// (density/blocks) fill every cell anyway, but kitty mode only places the

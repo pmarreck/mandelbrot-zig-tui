@@ -329,6 +329,54 @@ pub fn renderFrameKitty(
 }
 
 
+/// Emit ONLY the kitty-mode info bar at the last row of the terminal. Used
+/// by the modal-close fast path: when closing the help modal in kitty mode
+/// with an unchanged viewport, the kitty image is still placed in the
+/// terminal (clearScreen doesn't remove image placements, only cell text),
+/// so all we need to do is wipe modal residue (caller does clearScreen)
+/// and re-paint the info bar over its row. Avoids the full ~1 MB RGB
+/// encode + base64 transmit cycle of renderFrameKitty.
+pub fn renderKittyInfoBarOnly(
+	state: RenderState,
+	width: u16,
+	height: u16,
+	allocator: std.mem.Allocator,
+) ![]u8 {
+	if (!state.show_info or height <= 1) {
+		return try allocator.alloc(u8, 0);
+	}
+
+	var output: std.ArrayListUnmanaged(u8) = .{};
+	try output.ensureTotalCapacity(allocator, 320);
+
+	// Move cursor to (row=height, col=1) — the info bar's row.
+	var pos_buf: [32]u8 = undefined;
+	const pos = std.fmt.bufPrint(&pos_buf, "\x1b[{d};1H", .{height}) catch unreachable;
+	try output.appendSlice(allocator, pos);
+	try output.appendSlice(allocator, "\x1b[0m\x1b[7m");
+
+	var info_buf: [256]u8 = undefined;
+	const cre_f64: f64 = @floatCast(state.center_re);
+	const cim_f64: f64 = @floatCast(state.center_im);
+	const zoom_f64: f64 = @floatCast(state.zoom);
+
+	const info_str = std.fmt.bufPrint(&info_buf, " MANDELBROT_CENTER_RE={d:.15} MANDELBROT_CENTER_IM={d:.15} MANDELBROT_ZOOM={e} mandelbrot | iter={d} glyph=kitty", .{
+		cre_f64, cim_f64, zoom_f64, state.max_iter,
+	}) catch " [info too long]";
+
+	const info_len = @min(info_str.len, @as(usize, width));
+	try output.appendSlice(allocator, info_str[0..info_len]);
+
+	var pad: usize = info_len;
+	while (pad < width) : (pad += 1) {
+		try output.append(allocator, ' ');
+	}
+
+	try output.appendSlice(allocator, "\x1b[0m");
+	return try output.toOwnedSlice(allocator);
+}
+
+
 /// Render the help modal as an overlay. Does NOT redraw the underlying frame —
 /// the caller is responsible for either rendering a frame first (so the modal
 /// appears on top of the current view) or for setting needs_redraw on close so
