@@ -124,6 +124,7 @@ pub fn main() !void {
 				\\  [/]            Decrease/increase max iterations
 				\\  i              Toggle info bar
 				\\  g              Cycle glyph mode (density, blocks, kitty)
+				\\  ? / h          Show keyboard + mouse help modal (any key to close)
 				\\  q / Ctrl-C     Quit
 				\\
 			, .{});

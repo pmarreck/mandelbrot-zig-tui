@@ -59,6 +59,12 @@ pub const AppState = struct {
 	/// --force-kitty. Gates the kitty option in the g-cycle so users on
 	/// non-supporting terminals don't end up with a screenful of escape garbage.
 	kitty_available: bool = false,
+	/// Whether the help modal is currently displayed. While true, every input
+	/// event closes the modal (any key / mouse click) and triggers a redraw of
+	/// the underlying frame. processEvent does not propagate the dismissing
+	/// event to its normal handler — pressing 'g' to close the modal does not
+	/// also cycle the glyph mode.
+	show_help: bool = false,
 };
 
 pub fn defaultState() AppState {
@@ -161,6 +167,18 @@ pub fn renderOneFrame(
 	allocator: std.mem.Allocator,
 	stdout: *std.Io.Writer,
 ) !void {
+	// Help modal: draw on top of whatever's currently displayed (do not
+	// recompute the frame underneath). Closing the modal sets needs_redraw
+	// true so the next pass repaints the normal frame.
+	if (state.show_help) {
+		const modal = try renderer.renderHelpModal(state.term_width, state.term_height, allocator);
+		defer allocator.free(modal);
+		try stdout.writeAll(modal);
+		try stdout.flush();
+		state.needs_redraw = false;
+		return;
+	}
+
 	const render_height: u16 = if (state.show_info and state.term_height > 1)
 		state.term_height - 1
 	else
@@ -460,6 +478,25 @@ fn viewportChanged(old: AppState, new: AppState) bool {
 /// No I/O, no side effects: testable as a pure function.
 pub fn processEvent(state: AppState, event: input.Event) AppState {
 	var s = state;
+
+	// Modal capture: while help is showing, every input dismisses it and is
+	// consumed (does not propagate to normal handlers). Resize is exempt — we
+	// still want the modal to redraw at the new center on terminal resize.
+	if (s.show_help) {
+		switch (event) {
+			.resize => {
+				s.needs_redraw = true;
+				return s;
+			},
+			.unknown => return s,
+			else => {
+				s.show_help = false;
+				s.needs_redraw = true;
+				return s;
+			},
+		}
+	}
+
 	switch (event) {
 		.key_q, .ctrl_c => {
 			s.running = false;
@@ -574,6 +611,11 @@ pub fn processEvent(state: AppState, event: input.Event) AppState {
 		.resize => {
 			s.needs_redraw = true;
 		},
+		.key_h, .key_question => {
+			s.show_help = true;
+			s.needs_redraw = true;
+		},
+		.key_escape => {},
 		.unknown => {},
 	}
 	return s;

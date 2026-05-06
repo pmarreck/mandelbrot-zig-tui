@@ -321,6 +321,68 @@ pub fn renderFrameKitty(
 }
 
 
+/// Render the help modal as an overlay. Does NOT redraw the underlying frame —
+/// the caller is responsible for either rendering a frame first (so the modal
+/// appears on top of the current view) or for setting needs_redraw on close so
+/// the cells covered by the modal get repainted.
+///
+/// The modal is a fixed 40×20 cell box, centered when the terminal is large
+/// enough; otherwise pinned to the top-left. Content is plain ASCII inside
+/// Unicode box-drawing borders so the visible widths line up regardless of
+/// font metrics.
+pub fn renderHelpModal(
+	width: u16,
+	height: u16,
+	allocator: std.mem.Allocator,
+) ![]u8 {
+	const modal_lines = [_][]const u8{
+		"┌─ mandelbrot - keys & mouse ──────────┐",
+		"│                                      │",
+		"│  Mouse                               │",
+		"│   Left-click    Zoom in 2x at point  │",
+		"│   Right-click   Zoom out 2x at point │",
+		"│   Drag          Pan                  │",
+		"│   Scroll wheel  Zoom in / out        │",
+		"│                                      │",
+		"│  Keys                                │",
+		"│   + / =         Zoom in 2x           │",
+		"│   -             Zoom out 2x          │",
+		"│   Arrow keys    Pan                  │",
+		"│   [ / ]         -/+ max iterations   │",
+		"│   g             Cycle glyph mode     │",
+		"│   i             Toggle info bar      │",
+		"│   ? / h         This help            │",
+		"│   q / Ctrl-C    Quit                 │",
+		"│                                      │",
+		"│        Press any key to close        │",
+		"└──────────────────────────────────────┘",
+	};
+	const modal_w_cells: u16 = 40;
+	const modal_h_cells: u16 = @intCast(modal_lines.len);
+
+	const start_col: u16 = if (width > modal_w_cells) (width - modal_w_cells) / 2 + 1 else 1;
+	const start_row: u16 = if (height > modal_h_cells) (height - modal_h_cells) / 2 + 1 else 1;
+
+	var output: std.ArrayListUnmanaged(u8) = .{};
+	try output.ensureTotalCapacity(allocator, modal_lines.len * 96);
+
+	// Reset attributes, then white-on-black for modal contents (forces a
+	// readable color combo regardless of the underlying frame's last color).
+	try output.appendSlice(allocator, "\x1b[0m\x1b[37;40m");
+
+	for (modal_lines, 0..) |line, i| {
+		const row: u16 = start_row + @as(u16, @intCast(i));
+		var pos_buf: [32]u8 = undefined;
+		const pos = std.fmt.bufPrint(&pos_buf, "\x1b[{d};{d}H", .{ row, start_col }) catch continue;
+		try output.appendSlice(allocator, pos);
+		try output.appendSlice(allocator, line);
+	}
+
+	try output.appendSlice(allocator, "\x1b[0m");
+	return try output.toOwnedSlice(allocator);
+}
+
+
 /// Render a complete frame as an ANSI-escaped byte buffer.
 /// Convenience wrapper: computes the iteration buffer internally, then calls
 /// renderFrameFromBuffer. Uses 24-bit true-color (\x1b[38;2;R;G;Bm) for smooth gradients.
