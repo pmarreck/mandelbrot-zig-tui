@@ -78,6 +78,7 @@ pub fn main() !void {
 				\\  --bench-zoom-sequence N    Render N zoom-in frames for perf testing, print timing, exit
 				\\  --bench-quiet              With --bench-zoom-sequence: suppress per-frame output
 				\\  --glyph=MODE               Initial glyph mode: density (default) or blocks
+				\\  --blocks                   Shortcut for --glyph=blocks (same as MANDELBROT_SUBBLOCK=1)
 				\\  --center-re F              Override MANDELBROT_CENTER_RE
 				\\  --center-im F              Override MANDELBROT_CENTER_IM
 				\\  --zoom F                   Override MANDELBROT_ZOOM
@@ -157,6 +158,10 @@ pub fn main() !void {
 		}
 		if (std.mem.eql(u8, arg, "--bench-quiet")) {
 			bench_quiet = true;
+			continue;
+		}
+		if (std.mem.eql(u8, arg, "--blocks")) {
+			cli_glyph_mode = .blocks;
 			continue;
 		}
 		if (std.mem.startsWith(u8, arg, "--glyph=")) {
