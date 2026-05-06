@@ -30,6 +30,7 @@ pub fn main() !void {
 	var bench_zoom_n: ?u32 = null;
 	var bench_quiet = false;
 	var cli_glyph_mode: ?coloring.GlyphMode = null;
+	var force_kitty = false;
 	var raw_anim = animation.RawAnimationFlags{};
 	var cli_center_re: ?f128 = null;
 	var cli_center_im: ?f128 = null;
@@ -77,8 +78,11 @@ pub fn main() !void {
 				\\  --single-frame             Render one frame to stdout and exit
 				\\  --bench-zoom-sequence N    Render N zoom-in frames for perf testing, print timing, exit
 				\\  --bench-quiet              With --bench-zoom-sequence: suppress per-frame output
-				\\  --glyph=MODE               Initial glyph mode: density (default) or blocks
+				\\  --glyph=MODE               Initial glyph mode: density (default), blocks, or kitty
 				\\  --blocks                   Shortcut for --glyph=blocks (same as MANDELBROT_SUBBLOCK=1)
+				\\  --kitty                    Shortcut for --glyph=kitty (true per-pixel via kitty graphics)
+				\\  --force-kitty              Treat the terminal as kitty-graphics capable even if
+				\\                             auto-detection fails (e.g. SSH sessions where env vars are stripped)
 				\\  --center-re F              Override MANDELBROT_CENTER_RE
 				\\  --center-im F              Override MANDELBROT_CENTER_IM
 				\\  --zoom F                   Override MANDELBROT_ZOOM
@@ -119,7 +123,7 @@ pub fn main() !void {
 				\\  Arrow keys     Pan
 				\\  [/]            Decrease/increase max iterations
 				\\  i              Toggle info bar
-				\\  g              Cycle glyph mode (density, blocks)
+				\\  g              Cycle glyph mode (density, blocks, kitty)
 				\\  q / Ctrl-C     Quit
 				\\
 			, .{});
@@ -164,14 +168,24 @@ pub fn main() !void {
 			cli_glyph_mode = .blocks;
 			continue;
 		}
+		if (std.mem.eql(u8, arg, "--kitty")) {
+			cli_glyph_mode = .kitty;
+			continue;
+		}
+		if (std.mem.eql(u8, arg, "--force-kitty")) {
+			force_kitty = true;
+			continue;
+		}
 		if (std.mem.startsWith(u8, arg, "--glyph=")) {
 			const mode_str = arg["--glyph=".len..];
 			if (std.mem.eql(u8, mode_str, "density")) {
 				cli_glyph_mode = .density;
 			} else if (std.mem.eql(u8, mode_str, "blocks")) {
 				cli_glyph_mode = .blocks;
+			} else if (std.mem.eql(u8, mode_str, "kitty")) {
+				cli_glyph_mode = .kitty;
 			} else {
-				try stderr.writeAll("--glyph= must be 'density' or 'blocks'\n");
+				try stderr.writeAll("--glyph= must be 'density', 'blocks', or 'kitty'\n");
 				try stderr.flush();
 				return error.BadCliArg;
 			}
@@ -292,6 +306,29 @@ pub fn main() !void {
 		} else |_| {}
 	}
 
+	// Cell pixel size (only meaningful for kitty mode, but cheap to query
+	// always). Falls back to a reasonable default if the terminal does not
+	// populate xpixel/ypixel via TIOCGWINSZ.
+	const cell_px = terminal.getCellPixelSizePosix();
+	state.cell_px_w = cell_px.width;
+	state.cell_px_h = cell_px.height;
+
+	// Resolve kitty graphics availability: detect from env, with --force-kitty
+	// as the override for SSH sessions / unknown emulators. If the user asked
+	// for kitty mode (--kitty / --glyph=kitty) without it being available,
+	// bail with a clear hint rather than spewing escape sequences.
+	state.kitty_available = force_kitty or terminal.detectKittyGraphicsSupport();
+	if (cli_glyph_mode == .kitty and !state.kitty_available) {
+		try stderr.writeAll(
+			\\kitty graphics protocol not detected in this terminal.
+			\\If your terminal supports kitty graphics (kitty, Ghostty, WezTerm,
+			\\recent Konsole) and detection failed (e.g. via SSH), pass --force-kitty.
+			\\
+		);
+		try stderr.flush();
+		return error.BadCliArg;
+	}
+
 	// Glyph mode precedence: default (density) → env var → CLI flag
 	if (parseBoolEnv("MANDELBROT_SUBBLOCK")) {
 		state.glyph_mode = .blocks;
@@ -371,6 +408,27 @@ pub fn main() !void {
 					.aspect_ratio = 0.5,
 				}, iter_buf, null);
 				break :blk try renderer.renderFrameFromBlocksBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator);
+			},
+			.kitty => blk: {
+				const render_height: u16 = if (state.show_info and state.term_height > 1)
+					state.term_height - 1
+				else
+					state.term_height;
+				const buf_width: u16 = state.term_width * state.cell_px_w;
+				const buf_height: u16 = render_height * state.cell_px_h;
+				const pixel_count = @as(usize, buf_width) * @as(usize, buf_height);
+				const iter_buf = try allocator.alloc(f64, pixel_count);
+				defer allocator.free(iter_buf);
+				try mandelbrot.parallelComputeRegion(.{
+					.center_re = state.center_re,
+					.center_im = state.center_im,
+					.zoom = state.zoom,
+					.width = buf_width,
+					.height = buf_height,
+					.max_iter = state.max_iter,
+					.aspect_ratio = 1.0,
+				}, iter_buf, null);
+				break :blk try renderer.renderFrameKitty(render_state, state.term_width, state.term_height, state.cell_px_w, state.cell_px_h, iter_buf, allocator);
 			},
 		};
 		defer allocator.free(frame);

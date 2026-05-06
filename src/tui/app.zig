@@ -14,7 +14,19 @@ const coloring = @import("coloring");
 const animation = @import("animation");
 
 const ZOOM_FACTOR: f128 = 2.0;
+/// Cell-mode aspect ratio (chars are ~2× taller than wide); used by viewport
+/// math + density/blocks compute. Kitty mode computes per-pixel and uses 1.0.
 const ASPECT_RATIO: f64 = 0.5;
+
+/// Aspect-ratio compensation for the iteration grid in each glyph mode.
+/// Density/blocks compute over cell-aligned grids (cells are ~2:1 H:W);
+/// kitty computes over native square pixels.
+fn computeAspect(mode: coloring.GlyphMode) f64 {
+	return switch (mode) {
+		.density, .blocks => ASPECT_RATIO,
+		.kitty => 1.0,
+	};
+}
 
 pub const AppState = struct {
 	center_re: f128,
@@ -33,6 +45,20 @@ pub const AppState = struct {
 	/// Set to true once a drag motion event fires. Prevents release from zooming.
 	did_drag: bool = false,
 	glyph_mode: coloring.GlyphMode = .density,
+	/// Cell pixel dimensions for kitty-graphics mode. Default (1,1) is harmless
+	/// for density/blocks since neither reads these. main.zig populates them
+	/// from terminal.getCellPixelSizePosix at startup.
+	cell_px_w: u16 = 1,
+	cell_px_h: u16 = 1,
+	/// Tracks the glyph_mode of the most recently rendered frame so that when
+	/// the user toggles out of kitty mode we can delete the lingering image
+	/// from the terminal's image cache before drawing cell-mode output.
+	last_rendered_glyph_mode: ?coloring.GlyphMode = null,
+	/// Whether the kitty graphics protocol is available in this terminal.
+	/// Detected at startup (terminal.detectKittyGraphicsSupport) or forced via
+	/// --force-kitty. Gates the kitty option in the g-cycle so users on
+	/// non-supporting terminals don't end up with a screenful of escape garbage.
+	kitty_available: bool = false,
 };
 
 pub fn defaultState() AppState {
@@ -116,6 +142,7 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 		state = new_state;
 	}
 
+	try terminal.deleteKittyImageById(stdout, 1);
 	try terminal.disableMouseTracking(stdout);
 	try terminal.showCursor(stdout);
 	try terminal.clearScreen(stdout);
@@ -139,13 +166,21 @@ pub fn renderOneFrame(
 	else
 		state.term_height;
 
-	// Sub-pixel multiplier: 1 for density mode, 2 for blocks mode
-	const sub_mul: u16 = switch (state.glyph_mode) {
+	// Sub-pixel multipliers per axis: 1 for density, 2 for blocks, full
+	// cell pixel size for kitty (which renders at native pixel resolution).
+	const sub_w: u16 = switch (state.glyph_mode) {
 		.density => 1,
 		.blocks => 2,
+		.kitty => state.cell_px_w,
 	};
-	const buf_width: u16 = state.term_width * sub_mul;
-	const buf_height: u16 = render_height * sub_mul;
+	const sub_h: u16 = switch (state.glyph_mode) {
+		.density => 1,
+		.blocks => 2,
+		.kitty => state.cell_px_h,
+	};
+	const aspect: f64 = computeAspect(state.glyph_mode);
+	const buf_width: u16 = state.term_width * sub_w;
+	const buf_height: u16 = render_height * sub_h;
 	const pixel_count = @as(usize, buf_width) * @as(usize, buf_height);
 
 	const iter_buf = try allocator.alloc(f64, pixel_count);
@@ -159,9 +194,9 @@ pub fn renderOneFrame(
 	if (cache_stack.levels[0]) |level| {
 		const w: f128 = @floatFromInt(buf_width);
 		const h: f128 = @floatFromInt(buf_height);
-		const aspect: f128 = @floatCast(ASPECT_RATIO);
+		const aspect_f128: f128 = @floatCast(aspect);
 		const expected_range_re: f128 = 4.0 / state.zoom;
-		const expected_range_im: f128 = expected_range_re * (h / w) / aspect;
+		const expected_range_im: f128 = expected_range_re * (h / w) / aspect_f128;
 		const expected_origin_re: f128 = state.center_re - expected_range_re / 2.0;
 		const expected_origin_im: f128 = state.center_im - expected_range_im / 2.0;
 		const expected_step_re: f128 = expected_range_re / w;
@@ -193,7 +228,7 @@ pub fn renderOneFrame(
 			buf_width,
 			buf_height,
 			state.max_iter,
-			ASPECT_RATIO,
+			aspect,
 		);
 
 		try mandelbrot.parallelComputeRegion(.{
@@ -203,7 +238,7 @@ pub fn renderOneFrame(
 			.width = buf_width,
 			.height = buf_height,
 			.max_iter = state.max_iter,
-			.aspect_ratio = ASPECT_RATIO,
+			.aspect_ratio = aspect,
 		}, iter_buf, null);
 
 		if (cache_stack.levels[0]) |*level| {
@@ -222,15 +257,25 @@ pub fn renderOneFrame(
 		.glyph_mode = state.glyph_mode,
 	};
 
+	// On transition out of kitty mode, delete the lingering image so it doesn't
+	// stay painted under the new cell-mode output. Idempotent on the terminal
+	// side; cheap enough to send from any mode but only sent on actual transition.
+	if (state.glyph_mode != .kitty and state.last_rendered_glyph_mode == .kitty) {
+		try terminal.deleteKittyImageById(stdout, 1);
+		try terminal.clearScreen(stdout);
+	}
+
 	const frame = switch (state.glyph_mode) {
 		.density => try renderer.renderFrameFromBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator),
 		.blocks => try renderer.renderFrameFromBlocksBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator),
+		.kitty => try renderer.renderFrameKitty(render_state, state.term_width, state.term_height, state.cell_px_w, state.cell_px_h, iter_buf, allocator),
 	};
 	defer allocator.free(frame);
 
 	try stdout.writeAll(frame);
 	try stdout.flush();
 	state.needs_redraw = false;
+	state.last_rendered_glyph_mode = state.glyph_mode;
 
 	scheduler.requestWork();
 }
@@ -345,6 +390,7 @@ pub fn runAnimation(
 	// tty mode: exit only if exit_after set, otherwise fall through to interactive
 	if (!is_tty or config.exit_after) {
 		if (is_tty) {
+			try terminal.deleteKittyImageById(stdout, 1);
 			try terminal.disableMouseTracking(stdout);
 			try terminal.showCursor(stdout);
 			try terminal.clearScreen(stdout);
@@ -388,6 +434,7 @@ pub fn runAnimation(
 		state = new_state;
 	}
 
+	try terminal.deleteKittyImageById(stdout, 1);
 	try terminal.disableMouseTracking(stdout);
 	try terminal.showCursor(stdout);
 	try terminal.clearScreen(stdout);
@@ -516,10 +563,11 @@ pub fn processEvent(state: AppState, event: input.Event) AppState {
 			s.needs_redraw = true;
 		},
 		.key_g => {
-			// Cycle glyph mode: density → blocks → density
+			// Cycle glyph mode: density → blocks → (kitty if available) → density
 			s.glyph_mode = switch (s.glyph_mode) {
 				.density => .blocks,
-				.blocks => .density,
+				.blocks => if (s.kitty_available) .kitty else .density,
+				.kitty => .density,
 			};
 			s.needs_redraw = true;
 		},

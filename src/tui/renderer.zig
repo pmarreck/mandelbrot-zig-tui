@@ -212,6 +212,115 @@ pub fn renderFrameFromBlocksBuffer(
 }
 
 
+/// Render a kitty-graphics-protocol frame from a per-pixel iteration buffer.
+/// iter_buf holds (term_width × cell_px_w) × (render_height × cell_px_h) f64
+/// values, row-major; each is converted to an RGB triple via coloring.iterToColor
+/// and the whole image is transmitted as raw RGB chunked base64 over the
+/// kitty graphics escape protocol. The image displays at the current cursor
+/// position and cursor moves down by render_height cells, so the optional
+/// info bar lands at the last row in step with density/blocks modes.
+/// Caller owns the returned memory.
+pub fn renderFrameKitty(
+	state: RenderState,
+	width: u16,
+	height: u16,
+	cell_px_w: u16,
+	cell_px_h: u16,
+	iter_buf: []const f64,
+	allocator: std.mem.Allocator,
+) ![]u8 {
+	const render_height: u16 = if (state.show_info and height > 1) height - 1 else height;
+	const px_w: u32 = @as(u32, width) * @as(u32, cell_px_w);
+	const px_h: u32 = @as(u32, render_height) * @as(u32, cell_px_h);
+	const pixel_count: usize = @as(usize, px_w) * @as(usize, px_h);
+
+	// RGB scratch: 3 bytes per pixel, then base64-chunk it into kitty escapes.
+	const rgb_bytes = try allocator.alloc(u8, pixel_count * 3);
+	defer allocator.free(rgb_bytes);
+
+	var i: usize = 0;
+	while (i < pixel_count) : (i += 1) {
+		const color = coloring.iterToColor(iter_buf[i], state.max_iter);
+		rgb_bytes[i * 3 + 0] = color.r;
+		rgb_bytes[i * 3 + 1] = color.g;
+		rgb_bytes[i * 3 + 2] = color.b;
+	}
+
+	var output: std.ArrayListUnmanaged(u8) = .{};
+	// Rough envelope: base64 grows by 4/3, plus per-chunk header overhead.
+	const est = (rgb_bytes.len * 4 / 3) + (rgb_bytes.len / 3072 + 1) * 48 + 512;
+	try output.ensureTotalCapacity(allocator, est);
+
+	// Cursor home so the image lands in the top-left of the screen.
+	try output.appendSlice(allocator, "\x1b[H");
+
+	// Kitty graphics chunked transmission.
+	// f=24 RGB, t=d direct payload, a=T transmit + display,
+	// i=1 image ID (reusing the same slot frees prior frame),
+	// q=2 suppress all responses, m=1/0 chunk continuation marker.
+	// Per spec the base64 payload of each chunk should be ≤ 4096 chars,
+	// so we feed 3072 raw bytes per chunk (3072 * 4/3 = 4096).
+	const CHUNK_RAW: usize = 3072;
+	const b64 = std.base64.standard.Encoder;
+
+	var offset: usize = 0;
+	var first_chunk = true;
+	while (offset < rgb_bytes.len) {
+		const remaining = rgb_bytes.len - offset;
+		const this_chunk = @min(CHUNK_RAW, remaining);
+		const is_last = (offset + this_chunk) == rgb_bytes.len;
+		const m_flag: u8 = if (is_last) '0' else '1';
+
+		// Header for this chunk.
+		var hdr_buf: [128]u8 = undefined;
+		const hdr = if (first_chunk)
+			std.fmt.bufPrint(&hdr_buf, "\x1b_Gf=24,s={d},v={d},a=T,t=d,i=1,q=2,m={c};", .{ px_w, px_h, m_flag }) catch unreachable
+		else
+			std.fmt.bufPrint(&hdr_buf, "\x1b_Gm={c};", .{m_flag}) catch unreachable;
+		try output.appendSlice(allocator, hdr);
+
+		// Reserve worst-case base64 length and encode in place.
+		const enc_len = b64.calcSize(this_chunk);
+		try output.ensureUnusedCapacity(allocator, enc_len + 2);
+		const dst = output.allocatedSlice()[output.items.len .. output.items.len + enc_len];
+		_ = b64.encode(dst, rgb_bytes[offset .. offset + this_chunk]);
+		output.items.len += enc_len;
+
+		try output.appendSlice(allocator, "\x1b\\");
+
+		offset += this_chunk;
+		first_chunk = false;
+	}
+
+	// Info bar: kitty leaves the cursor at row (render_height + 1) which is
+	// term_height when show_info is on — exactly where we want the bar.
+	if (state.show_info and height > 1) {
+		try output.appendSlice(allocator, "\x1b[0m\x1b[7m");
+
+		var info_buf: [256]u8 = undefined;
+		const cre_f64: f64 = @floatCast(state.center_re);
+		const cim_f64: f64 = @floatCast(state.center_im);
+		const zoom_f64: f64 = @floatCast(state.zoom);
+
+		const info_str = std.fmt.bufPrint(&info_buf, " MANDELBROT_CENTER_RE={d:.15} MANDELBROT_CENTER_IM={d:.15} MANDELBROT_ZOOM={e} mandelbrot | iter={d} glyph=kitty", .{
+			cre_f64, cim_f64, zoom_f64, state.max_iter,
+		}) catch " [info too long]";
+
+		const info_len = @min(info_str.len, @as(usize, width));
+		try output.appendSlice(allocator, info_str[0..info_len]);
+
+		var pad: usize = info_len;
+		while (pad < width) : (pad += 1) {
+			try output.append(allocator, ' ');
+		}
+
+		try output.appendSlice(allocator, "\x1b[0m");
+	}
+
+	return try output.toOwnedSlice(allocator);
+}
+
+
 /// Render a complete frame as an ANSI-escaped byte buffer.
 /// Convenience wrapper: computes the iteration buffer internally, then calls
 /// renderFrameFromBuffer. Uses 24-bit true-color (\x1b[38;2;R;G;Bm) for smooth gradients.

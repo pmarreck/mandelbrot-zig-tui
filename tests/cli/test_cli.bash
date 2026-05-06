@@ -142,6 +142,34 @@ else
 	fail "--glyph=density overrides MANDELBROT_SUBBLOCK=1" "rc=$rc"
 fi
 
+# Test: --kitty without env support and without --force-kitty exits non-zero
+env -i "$BINARY" --kitty --single-frame >/dev/null 2>&1
+rc=$?
+if [ "$rc" -ne 0 ]; then
+	pass "--kitty without env support exits non-zero"
+else
+	fail "--kitty without env support exits non-zero" "rc=$rc"
+fi
+
+# Test: --kitty --force-kitty produces kitty graphics escape sequences
+output=$(env -i "$BINARY" --kitty --force-kitty --single-frame 2>/dev/null)
+rc=$?
+# Kitty graphics protocol opens with ESC _ G
+if [ "$rc" -eq 0 ] && printf '%s' "$output" | grep -qE $'\x1b_G'; then
+	pass "--kitty --force-kitty produces kitty graphics escapes"
+else
+	fail "--kitty --force-kitty produces kitty graphics escapes" "rc=$rc"
+fi
+
+# Test: --kitty in a recognized terminal env (TERM_PROGRAM=ghostty) succeeds
+output=$(env -i TERM_PROGRAM=ghostty "$BINARY" --kitty --single-frame 2>/dev/null)
+rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$output" | grep -qE $'\x1b_G'; then
+	pass "--kitty with TERM_PROGRAM=ghostty produces kitty escapes"
+else
+	fail "--kitty with TERM_PROGRAM=ghostty produces kitty escapes" "rc=$rc"
+fi
+
 # Test: --animate runs to completion with minimal params
 output=$("$BINARY" --animate --duration 0.3 --fps 10 --zoom-to 10 --exit-after 2>&1 >/dev/null)
 rc=$?

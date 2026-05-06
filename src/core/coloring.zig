@@ -19,8 +19,10 @@ pub const Cell = struct {
 };
 
 /// Glyph rendering mode. Density uses ASCII intensity characters;
-/// blocks uses Unicode quadrant characters for 2×2 sub-pixel shape fidelity.
-pub const GlyphMode = enum { density, blocks };
+/// blocks uses Unicode quadrant characters for 2×2 sub-pixel shape fidelity;
+/// kitty emits the kitty graphics protocol for true per-pixel rendering on
+/// supporting terminals (kitty, Ghostty, WezTerm, recent Konsole).
+pub const GlyphMode = enum { density, blocks, kitty };
 
 /// Result of iterToBlock — UTF-8 char bytes + FG/BG colors for a terminal cell.
 pub const BlockCell = struct {
