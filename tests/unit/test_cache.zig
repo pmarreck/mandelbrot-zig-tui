@@ -176,7 +176,7 @@ test "CacheStack createLevel creates a 2x level with parent bounds" {
     try testing.expectEqual(stack.levels[0].?.step_re / 2.0, stack.levels[1].?.step_re);
 }
 
-test "CacheStack shiftOnZoomIn rotates levels down" {
+test "CacheStack findCoveringLevel: 2x zoom-in at center hits Level 1" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -184,24 +184,141 @@ test "CacheStack shiftOnZoomIn rotates levels down" {
     var stack = cache.CacheStack.init();
     defer stack.deinit(allocator);
 
-    // Create levels 0-3
-    try stack.initForViewport(allocator, -0.5, 0.0, 1.0, 10, 10, 256, 0.5);
-    try stack.createLevel(allocator, 1); // 2x (20x20)
-    try stack.createLevel(allocator, 2); // 4x (40x40)
-    try stack.createLevel(allocator, 3); // 8x (80x80)
-
-    // Mark level 1 as having specific data
-    stack.levels[1].?.set(0, 0, 99.0);
+    // Initial viewport: 10×10 cells, centered at origin, zoom=1.
+    // After initForViewport: Level 0 step = 4.0 / 1.0 / 10 = 0.4 (×aspect for im).
+    try stack.initForViewport(allocator, 0.0, 0.0, 1.0, 10, 10, 256, 1.0);
+    try stack.createLevel(allocator, 1);
     stack.levels[1].?.complete = true;
 
-    stack.shiftOnZoomIn(allocator);
+    const lvl0 = stack.levels[0].?;
+    // 2x zoom-in at center of original viewport: same center, half the step.
+    const new_step_re = lvl0.step_re / 2.0;
+    const new_step_im = lvl0.step_im / 2.0;
+    // New origin: center - 5 * new_step (since W=10).
+    const new_origin_re = 0.0 - 5.0 * new_step_re;
+    const new_origin_im = 0.0 - 5.0 * new_step_im;
 
-    // Old level 1 should now be level 0
-    try testing.expect(stack.levels[0] != null);
-    try testing.expectEqual(@as(f64, 99.0), stack.levels[0].?.get(0, 0));
-    try testing.expectEqual(@as(u32, 20), stack.levels[0].?.width);
-    // Level 4 should be null (needs computation)
-    try testing.expect(stack.levels[4] == null);
+    const cov = stack.findCoveringLevel(
+        new_origin_re, new_origin_im, new_step_re, new_step_im,
+        10, 10, 256,
+    );
+    try testing.expect(cov != null);
+    try testing.expectEqual(@as(u8, 1), cov.?.level_idx);
+    // Center crop of Level 1 (20×20) → offset (5, 5).
+    try testing.expectEqual(@as(u32, 5), cov.?.col_offset);
+    try testing.expectEqual(@as(u32, 5), cov.?.row_offset);
+}
+
+test "CacheStack findCoveringLevel: incomplete level is rejected" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var stack = cache.CacheStack.init();
+    defer stack.deinit(allocator);
+
+    try stack.initForViewport(allocator, 0.0, 0.0, 1.0, 10, 10, 256, 1.0);
+    try stack.createLevel(allocator, 1);
+    // Level 1 created but NOT marked complete — coverage should miss it.
+
+    const lvl0 = stack.levels[0].?;
+    const cov = stack.findCoveringLevel(
+        0.0 - 5.0 * (lvl0.step_re / 2.0),
+        0.0 - 5.0 * (lvl0.step_im / 2.0),
+        lvl0.step_re / 2.0,
+        lvl0.step_im / 2.0,
+        10, 10, 256,
+    );
+    try testing.expect(cov == null);
+}
+
+test "CacheStack findCoveringLevel: zoom-out (step doesn't match) misses" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var stack = cache.CacheStack.init();
+    defer stack.deinit(allocator);
+
+    try stack.initForViewport(allocator, 0.0, 0.0, 1.0, 10, 10, 256, 1.0);
+    try stack.createLevel(allocator, 1);
+    stack.levels[1].?.complete = true;
+
+    const lvl0 = stack.levels[0].?;
+    // 2× zoom-OUT: new step is 2× old step, no level has that.
+    const cov = stack.findCoveringLevel(
+        0.0 - 5.0 * (lvl0.step_re * 2.0),
+        0.0 - 5.0 * (lvl0.step_im * 2.0),
+        lvl0.step_re * 2.0,
+        lvl0.step_im * 2.0,
+        10, 10, 256,
+    );
+    try testing.expect(cov == null);
+}
+
+test "CacheStack findCoveringLevel: 2x zoom-in at corner exceeds level bbox" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var stack = cache.CacheStack.init();
+    defer stack.deinit(allocator);
+
+    try stack.initForViewport(allocator, 0.0, 0.0, 1.0, 10, 10, 256, 1.0);
+    try stack.createLevel(allocator, 1);
+    stack.levels[1].?.complete = true;
+
+    const lvl0 = stack.levels[0].?;
+    // Click at top-left corner (col=0, row=0) → new center is at far edge of viewport.
+    // New viewport extends past the cached bbox → no coverage.
+    const click_re = lvl0.origin_re;
+    const click_im = lvl0.origin_im;
+    const new_step_re = lvl0.step_re / 2.0;
+    const new_step_im = lvl0.step_im / 2.0;
+    const new_origin_re = click_re - 5.0 * new_step_re;
+    const new_origin_im = click_im - 5.0 * new_step_im;
+
+    const cov = stack.findCoveringLevel(
+        new_origin_re, new_origin_im, new_step_re, new_step_im,
+        10, 10, 256,
+    );
+    try testing.expect(cov == null);
+}
+
+test "CacheStack extractInto: copies the right sub-grid" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var stack = cache.CacheStack.init();
+    defer stack.deinit(allocator);
+
+    try stack.initForViewport(allocator, 0.0, 0.0, 1.0, 4, 4, 256, 1.0);
+    try stack.createLevel(allocator, 1); // 8×8
+
+    // Fill Level 1 with row*100 + col so we can spot offsets.
+    var r: u32 = 0;
+    while (r < 8) : (r += 1) {
+        var c: u32 = 0;
+        while (c < 8) : (c += 1) {
+            stack.levels[1].?.set(c, r, @floatFromInt(r * 100 + c));
+        }
+    }
+    stack.levels[1].?.complete = true;
+
+    var out: [16]f64 = undefined;
+    const cov = cache.CacheStack.Coverage{ .level_idx = 1, .col_offset = 2, .row_offset = 2 };
+    stack.extractInto(cov, 4, 4, &out);
+
+    // Expected: 4×4 sub-grid starting at (2,2) of Level 1.
+    // Row 0: (2,2)=202, (3,2)=203, (4,2)=204, (5,2)=205
+    try testing.expectEqual(@as(f64, 202), out[0]);
+    try testing.expectEqual(@as(f64, 203), out[1]);
+    try testing.expectEqual(@as(f64, 204), out[2]);
+    try testing.expectEqual(@as(f64, 205), out[3]);
+    // Row 3 (out): src row 5 → (2,5)=502, (3,5)=503, (4,5)=504, (5,5)=505
+    try testing.expectEqual(@as(f64, 502), out[12]);
+    try testing.expectEqual(@as(f64, 505), out[15]);
 }
 
 test "CacheStack invalidateAll clears everything" {

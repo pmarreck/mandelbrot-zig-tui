@@ -222,22 +222,22 @@ pub fn renderOneFrame(
 	const iter_buf = try allocator.alloc(f64, pixel_count);
 	defer allocator.free(iter_buf);
 
-	// Check cache Level 0 first. We compare the cache level's stored origin/step
-	// against expected values for the current viewport — if those match bit-for-bit,
-	// the cache holds the right data. Dimensions alone aren't enough (animation
-	// mode reuses the same dimensions across many different viewports).
+	// Compute the expected viewport quantities once — used for both the
+	// Level 0 exact-match check and the deeper-level coverage search.
+	const w_f128: f128 = @floatFromInt(buf_width);
+	const h_f128: f128 = @floatFromInt(buf_height);
+	const aspect_f128: f128 = @floatCast(aspect);
+	const expected_range_re: f128 = 4.0 / state.zoom;
+	const expected_range_im: f128 = expected_range_re * (h_f128 / w_f128) / aspect_f128;
+	const expected_origin_re: f128 = state.center_re - expected_range_re / 2.0;
+	const expected_origin_im: f128 = state.center_im - expected_range_im / 2.0;
+	const expected_step_re: f128 = expected_range_re / w_f128;
+	const expected_step_im: f128 = expected_range_im / h_f128;
+
+	// Path 1: Level 0 exact match. Same viewport as the previous render
+	// (e.g. info-bar toggle, modal close) — instant memcpy from the cache.
 	var cache_hit = false;
 	if (cache_stack.levels[0]) |level| {
-		const w: f128 = @floatFromInt(buf_width);
-		const h: f128 = @floatFromInt(buf_height);
-		const aspect_f128: f128 = @floatCast(aspect);
-		const expected_range_re: f128 = 4.0 / state.zoom;
-		const expected_range_im: f128 = expected_range_re * (h / w) / aspect_f128;
-		const expected_origin_re: f128 = state.center_re - expected_range_re / 2.0;
-		const expected_origin_im: f128 = state.center_im - expected_range_im / 2.0;
-		const expected_step_re: f128 = expected_range_re / w;
-		const expected_step_im: f128 = expected_range_im / h;
-
 		if (level.complete and
 			level.width == buf_width and
 			level.height == buf_height and
@@ -254,6 +254,31 @@ pub fn renderOneFrame(
 
 	if (!cache_hit) {
 		scheduler.stop();
+
+		// Path 2: deeper-level coverage hit. When the user zooms in 2× (at
+		// center or at any cursor position), the new viewport's step is
+		// bit-exactly half of Level 0's, matching Level 1's step. If Level 1
+		// is complete and its bbox contains the new viewport, we extract
+		// the right W×H sub-grid in O(W*H) memory bandwidth instead of
+		// running the full escape-time loop. Same trick works for 4× zoom
+		// via Level 2, though no UI action triggers that today.
+		var extracted = false;
+		if (cache_stack.findCoveringLevel(
+			expected_origin_re,
+			expected_origin_im,
+			expected_step_re,
+			expected_step_im,
+			buf_width,
+			buf_height,
+			state.max_iter,
+		)) |coverage| {
+			cache_stack.extractInto(coverage, buf_width, buf_height, iter_buf);
+			extracted = true;
+		}
+
+		// Either way (extracted or about-to-fresh-compute), the prior cache
+		// is no longer aligned with the new viewport — invalidate and
+		// rebuild Level 0 with whatever data we end up with.
 		cache_stack.invalidateAll(allocator);
 
 		try cache_stack.initForViewport(
@@ -267,15 +292,19 @@ pub fn renderOneFrame(
 			aspect,
 		);
 
-		try mandelbrot.parallelComputeRegion(.{
-			.center_re = state.center_re,
-			.center_im = state.center_im,
-			.zoom = state.zoom,
-			.width = buf_width,
-			.height = buf_height,
-			.max_iter = state.max_iter,
-			.aspect_ratio = aspect,
-		}, iter_buf, null);
+		// Path 3: fresh compute. Reached only when neither Level 0 nor any
+		// deeper level satisfied the new viewport.
+		if (!extracted) {
+			try mandelbrot.parallelComputeRegion(.{
+				.center_re = state.center_re,
+				.center_im = state.center_im,
+				.zoom = state.zoom,
+				.width = buf_width,
+				.height = buf_height,
+				.max_iter = state.max_iter,
+				.aspect_ratio = aspect,
+			}, iter_buf, null);
+		}
 
 		if (cache_stack.levels[0]) |*level| {
 			@memcpy(level.data, iter_buf);

@@ -23,7 +23,7 @@ An interactive terminal-based Mandelbrot set explorer written in pure Zig, capab
 ### Precision & Performance
 - **Hardware f64 hot loop with double-double fallback** — f64 by default (fast on Apple Silicon / x86_64), automatically falls back to double-double (DD) arithmetic when zoom exceeds 10^13. DD represents high-precision numbers as two f64 values (`hi + lo`) using QD-style algorithms (TwoSum, TwoProd via `@mulAdd`), giving ~30 digits of precision using hardware f64 throughout — 3-10x faster than soft-float f128 emulation. f128 stays as test-only ground truth for verifying DD correctness.
 - **Multi-threaded rendering** — auto-detects CPU count (cap 12), stride-based row assignment for balanced load across threads. 30-70x end-to-end speedup over the naive baseline on Apple M4 Max.
-- **Progressive multi-resolution cache** — 5-level pyramid (1x, 2x, 4x, 8x, 16x) with 3-offset parallel doubling in the background. On idle, background threads progressively fill deeper levels so the next 4 zoom-ins are instant cache hits.
+- **Progressive multi-resolution cache + zoom-in prefetch** — 3-level pyramid (1×, 2×, 4×) with 3-offset parallel doubling in the background. After each frame, idle threads progressively fill Level 1 (2× density) and Level 2 (4× density). When the user zooms in 2× at any cursor position, the new viewport's grid step is bit-exactly Level 1's step, so a covering sub-grid is extracted from Level 1 in O(W·H) memory bandwidth instead of running the full escape-time loop. Cap at Level 2 keeps memory bounded across all glyph modes (kitty graphics renders at native cell-pixel resolution and would otherwise blow up at deeper levels).
 - **Race-free cache invalidation** — generation counter + thread-join barrier; no mutexes, no use-after-free.
 
 ### Interaction
@@ -218,10 +218,14 @@ Critical detail: `DD.fromF128(x)` converts an f128 to DD while preserving precis
 
 This alone gave roughly 34x sequential speedup (41 ms → 1.2 ms per 200x60 frame) at shallow zoom, plus deep-zoom capability that's 3-10x faster than the old f128 fallback (~9 ms/frame at zoom 1e16).
 
-### 4. Progressive multi-resolution pre-computation cache
-A 5-level resolution pyramid keeps Level 0 at display resolution, Level 1 at 2× density, Level 2 at 4×, etc. Each level covers the same complex-plane bounding box with doubled point density. When the user zooms in 2x, what was Level 1 becomes the new Level 0 (instant), and background threads start computing a new Level 4.
+### 4. Progressive multi-resolution cache with zoom-in prefetch
+A 3-level resolution pyramid keeps Level 0 at display resolution, Level 1 at 2× density, Level 2 at 4× density. Each level covers the same complex-plane bounding box with doubled point density. Background threads fill Levels 1–2 progressively after every render.
+
+When the user changes viewport, `findCoveringLevel` scans the deeper levels for one whose grid step matches the new viewport's step bit-exactly AND whose bounding box contains the new viewport. On a hit, `extractInto` copies the right W×H sub-grid into the iteration buffer in O(W·H) memory bandwidth — no escape-time computation. The math: a 2× zoom-in at *any* cursor position produces a new origin that lands exactly on Level 1's grid (the cursor maps to a Level 0 sample, which is also a Level 1 sample), so as long as Level 1's bbox contains the new bbox (always true when the cursor is inside the central half of the screen on each axis), the frame comes back instantly.
 
 The doubling step uses a clean 3-way parallel decomposition. Going from W×H to 2W×2H, the original W×H points are inherited at even indices; the 3W×H new points fall naturally into three patterns (odd-col/even-row, even-col/odd-row, odd-col/odd-row) that can be computed by 3 independent threads with zero synchronization between them. Each thread does exactly the same amount of work.
+
+The 3-level cap (vs an earlier 5-level design) keeps memory bounded across all glyph modes — kitty graphics renders at native cell-pixel resolution where Level 4 alone would be hundreds of megabytes. Level 1 satisfies the most common zoom interaction (`+`, click, scroll); Level 2 covers 4× zooms (which the UI doesn't expose as a single action but the math is symmetric).
 
 ### 5. Race-free cache invalidation without mutexes
 A long-lived coordinator thread drives the background pre-computation. When the user changes the viewport, the main thread calls `scheduler.stop()` which bumps an atomic generation counter (workers check it per-row and bail) AND joins the coordinator — a full barrier before the cache is invalidated. Subsequent render calls `requestWork()` which respawns a fresh coordinator. No mutexes on the data buffers; generation counter is the sole synchronization primitive.

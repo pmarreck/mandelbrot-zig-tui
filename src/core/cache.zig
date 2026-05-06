@@ -132,15 +132,24 @@ pub const CacheLevel = struct {
     }
 };
 
-/// Number of resolution levels in the cache stack.
-/// Level 0 = display resolution, Level 4 = 16x display resolution.
-pub const NUM_LEVELS: u8 = 5;
+/// Number of resolution levels in the cache stack. Level 0 is display
+/// resolution; each subsequent level doubles the per-axis sample density
+/// (Level N has 2^N × the per-axis density of Level 0).
+///
+/// We cap at 3 levels (0 = 1×, 1 = 2×, 2 = 4×) so the same per-mode budget
+/// works for kitty graphics, which renders at native cell-pixel resolution
+/// (Level 2 in kitty mode at an 80×24 terminal with 8×16 cells is already
+/// ~30 MB; deeper levels would push memory pressure for marginal benefit).
+/// Level 1 is what makes a 2× zoom-in into ANY cursor position cache-hit
+/// instantly (see findCoveringLevel); Level 2 covers 4× zoom-in but the
+/// UI doesn't expose that as a single action.
+pub const NUM_LEVELS: u8 = 3;
 
 pub const CacheStack = struct {
     levels: [NUM_LEVELS]?CacheLevel,
 
     pub fn init() CacheStack {
-        return .{ .levels = .{ null, null, null, null, null } };
+        return .{ .levels = @splat(null) };
     }
 
     pub fn deinit(self: *CacheStack, allocator: std.mem.Allocator) void {
@@ -207,17 +216,6 @@ pub const CacheStack = struct {
         });
     }
 
-    /// Shift all levels down by one (zoom in). Level 0 is freed,
-    /// Level 1 becomes Level 0, etc. Level 4 becomes null.
-    pub fn shiftOnZoomIn(self: *CacheStack, allocator: std.mem.Allocator) void {
-        if (self.levels[0]) |*l| l.deinit(allocator);
-        var i: u8 = 0;
-        while (i < NUM_LEVELS - 1) : (i += 1) {
-            self.levels[i] = self.levels[i + 1];
-        }
-        self.levels[NUM_LEVELS - 1] = null;
-    }
-
     /// Free all levels.
     pub fn invalidateAll(self: *CacheStack, allocator: std.mem.Allocator) void {
         for (&self.levels) |*level| {
@@ -241,5 +239,97 @@ pub const CacheStack = struct {
             }
         }
         return null;
+    }
+
+    pub const Coverage = struct {
+        level_idx: u8,
+        col_offset: u32,
+        row_offset: u32,
+    };
+
+    /// Find a complete cache level whose grid step matches the requested
+    /// viewport AND whose bounding box contains the new viewport, returning
+    /// the (col, row) offset within that level where extraction should begin.
+    ///
+    /// This is the "zoom-in prefetch hit" check: when the user zooms in 2×
+    /// at any cursor position, the new viewport's step is bit-exactly half
+    /// the current Level 0 step, which equals Level 1's step. If Level 1
+    /// is complete and contains the new viewport's bbox, we can extract a
+    /// W×H sub-grid in O(W*H) memory bandwidth instead of running the full
+    /// escape-time loop.
+    ///
+    /// Step-match uses bit-exact f128 equality — both quantities derive
+    /// from the same arithmetic chain (initial range/W, repeatedly halved
+    /// by power-of-2 zoom factors), so they're bit-identical when alignment
+    /// holds. A non-power-of-2 zoom (e.g., 1.5×) produces a step that
+    /// won't match any cached level, falling through to fresh compute.
+    pub fn findCoveringLevel(
+        self: CacheStack,
+        new_origin_re: f128,
+        new_origin_im: f128,
+        new_step_re: f128,
+        new_step_im: f128,
+        new_width: u32,
+        new_height: u32,
+        new_max_iter: u32,
+    ) ?Coverage {
+        // Skip Level 0 — caller's exact-match path already covered it.
+        var i: u8 = 1;
+        while (i < NUM_LEVELS) : (i += 1) {
+            const level = self.levels[i] orelse continue;
+            if (!level.complete) continue;
+            if (level.max_iter != new_max_iter) continue;
+            if (level.step_re != new_step_re or level.step_im != new_step_im) continue;
+
+            // Compute integer offsets, allowing a tiny epsilon for the
+            // f128 → integer conversion. Subtraction of nearby f128 values
+            // is exact when one is derived from the other by adding integer
+            // multiples of step (which is our usage), so the divisions
+            // should land on exact integers.
+            const off_re_f = (new_origin_re - level.origin_re) / level.step_re;
+            const off_im_f = (new_origin_im - level.origin_im) / level.step_im;
+            const off_re_round = @round(off_re_f);
+            const off_im_round = @round(off_im_f);
+            // Tolerance: 1e-9 of a step — much smaller than any pixel-scale
+            // alignment error we'd need to detect.
+            if (@abs(off_re_f - off_re_round) > 1e-9) continue;
+            if (@abs(off_im_f - off_im_round) > 1e-9) continue;
+            if (off_re_round < 0 or off_im_round < 0) continue;
+
+            const col_off: u32 = @intFromFloat(off_re_round);
+            const row_off: u32 = @intFromFloat(off_im_round);
+            // Bounds: extracted sub-grid must fit entirely within this level.
+            if (col_off + new_width > level.width) continue;
+            if (row_off + new_height > level.height) continue;
+
+            return Coverage{
+                .level_idx = i,
+                .col_offset = col_off,
+                .row_offset = row_off,
+            };
+        }
+        return null;
+    }
+
+    /// Extract a W×H sub-grid from the level at `coverage` into `out`.
+    /// Caller is responsible for ensuring `out` has length ≥ width*height
+    /// AND that `coverage` came from findCoveringLevel for the same viewport
+    /// (so bounds are guaranteed). Row-major destination order, matching
+    /// what parallelComputeRegion produces.
+    pub fn extractInto(
+        self: CacheStack,
+        coverage: Coverage,
+        out_width: u32,
+        out_height: u32,
+        out: []f64,
+    ) void {
+        const level = self.levels[coverage.level_idx].?;
+        var r: u32 = 0;
+        while (r < out_height) : (r += 1) {
+            const src_row = coverage.row_offset + r;
+            const src_start = @as(usize, src_row) * @as(usize, level.width) + @as(usize, coverage.col_offset);
+            const dst_start = @as(usize, r) * @as(usize, out_width);
+            @memcpy(out[dst_start .. dst_start + out_width], level.data[src_start .. src_start + out_width]);
+        }
     }
 };
