@@ -86,13 +86,26 @@ pub fn clearScreen(writer: anytype) !void {
 
 // ── Kitty graphics ──────────────────────────────────────────────────
 
-/// Heuristic detection of kitty-graphics-protocol support based on
-/// environment variables set by terminal emulators known to implement it.
-/// Conservative by design — only returns true for terminals on the known-good
-/// list. SSH sessions where these vars aren't forwarded, or new emulators not
-/// yet in the list, can be handled with --force-kitty.
+/// Detect kitty-graphics-protocol support. Order:
+///   1. KITTY_WINDOW_ID — set by kitty itself, definitive.
+///   2. Active probe (preferred) — sends a tiny "a=q" query and listens for
+///      the OK response. Authoritative for any terminal that implements the
+///      spec, regardless of what it calls itself in TERM/TERM_PROGRAM. Only
+///      attempted when stdin is a TTY (we need to read the response).
+///   3. Env-var heuristic fallback — for non-TTY stdin (piped input) or
+///      terminals that swallow the probe but report themselves through
+///      TERM_PROGRAM. Conservative; intentionally a last resort.
+/// --force-kitty in main.zig bypasses all of this when the user knows better.
 pub fn detectKittyGraphicsSupport() bool {
 	if (std.posix.getenv("KITTY_WINDOW_ID") != null) return true;
+	if (probeKittyGraphicsSupport()) return true;
+	return detectKittyGraphicsByEnv();
+}
+
+/// Last-resort name-based detection for terminals known to implement kitty
+/// graphics. Used only when the active probe cannot run (e.g. stdin is not
+/// a TTY, such as `cmd | mandelbrot`). Don't rely on this if you can probe.
+fn detectKittyGraphicsByEnv() bool {
 	if (std.posix.getenv("TERM_PROGRAM")) |tp| {
 		if (std.mem.eql(u8, tp, "ghostty")) return true;
 		if (std.mem.eql(u8, tp, "WezTerm")) return true;
@@ -103,6 +116,58 @@ pub fn detectKittyGraphicsSupport() bool {
 		if (std.mem.eql(u8, term, "xterm-ghostty")) return true;
 	}
 	return false;
+}
+
+/// Active probe via the kitty graphics protocol's `a=q` query operation.
+/// Sends a 1×1 raw-RGB query frame and polls stdin for ~200 ms for the
+/// `\x1b_Gi=31;OK\x1b\\` response. Terminals that don't implement kitty
+/// graphics ignore the APC sequence silently, so we time out and return false.
+///
+/// Briefly puts stdin in raw mode (saving + restoring original termios)
+/// because the response would otherwise be processed as keystrokes by the
+/// shell-managed terminal mode.
+pub fn probeKittyGraphicsSupport() bool {
+	if (!stdinIsTty()) return false;
+
+	const stdin_fd = posix.STDIN_FILENO;
+	const stdout_fd = posix.STDOUT_FILENO;
+
+	const orig = posix.tcgetattr(stdin_fd) catch return false;
+	var raw = orig;
+	raw.iflag.ICRNL = false;
+	raw.iflag.IXON = false;
+	raw.lflag.ECHO = false;
+	raw.lflag.ICANON = false;
+	raw.cc[@intFromEnum(posix.V.MIN)] = 0;
+	raw.cc[@intFromEnum(posix.V.TIME)] = 0;
+	posix.tcsetattr(stdin_fd, .FLUSH, raw) catch return false;
+	defer posix.tcsetattr(stdin_fd, .FLUSH, orig) catch {};
+
+	// 1×1 RGB query. AAAA decodes to 3 zero bytes (one black pixel).
+	// i=31 is an arbitrary id we'll look for in the response so we don't
+	// confuse it with replies to other queries that may be in flight.
+	const query = "\x1b_Gi=31,a=q,t=d,f=24,s=1,v=1;AAAA\x1b\\";
+	_ = posix.write(stdout_fd, query) catch return false;
+
+	var buf: [256]u8 = undefined;
+	var total: usize = 0;
+	var pfd = [_]posix.pollfd{.{ .fd = stdin_fd, .events = posix.POLL.IN, .revents = 0 }};
+	var remaining_ms: i32 = 200;
+	while (remaining_ms > 0 and total < buf.len) {
+		const slice_ms: i32 = @min(remaining_ms, 50);
+		const ready = posix.poll(&pfd, slice_ms) catch break;
+		remaining_ms -= slice_ms;
+		if (ready == 0) continue;
+		if (pfd[0].revents & posix.POLL.IN != 0) {
+			const n = posix.read(stdin_fd, buf[total..]) catch break;
+			if (n == 0) break;
+			total += n;
+			// Response is bracketed by ESC \ (ST). When we see it, stop.
+			if (total >= 2 and buf[total - 2] == 0x1b and buf[total - 1] == '\\') break;
+		}
+	}
+
+	return std.mem.indexOf(u8, buf[0..total], "i=31;OK") != null;
 }
 
 /// Delete a kitty-graphics-protocol image from the terminal's image cache by ID.
