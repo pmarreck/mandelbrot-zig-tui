@@ -314,6 +314,11 @@ pub fn main() !void {
 	state.cell_px_w = cell_px.width;
 	state.cell_px_h = cell_px.height;
 
+	// Test instrumentation: when MANDELBROT_FRAME_MARKER is set, emit an
+	// APC sync marker after every frame so PTY-driven tests can synchronize
+	// without polling. See AppState.frame_marker.
+	state.frame_marker = parseBoolEnv("MANDELBROT_FRAME_MARKER");
+
 	// Resolve kitty graphics availability: detect from env, with --force-kitty
 	// as the override for SSH sessions / unknown emulators. If the user asked
 	// for kitty mode (--kitty / --glyph=kitty) without it being available,

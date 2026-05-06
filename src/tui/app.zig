@@ -65,6 +65,13 @@ pub const AppState = struct {
 	/// event to its normal handler — pressing 'g' to close the modal does not
 	/// also cycle the glyph mode.
 	show_help: bool = false,
+	/// Test instrumentation: when true, renderOneFrame emits an APC sync
+	/// marker (\x1b_=FRAME=\x1b\\) after each frame flush. PTY-driven
+	/// integration tests block on this marker via tmux pipe-pane to
+	/// synchronize event-driven instead of polling-with-sleeps. Set via
+	/// the MANDELBROT_FRAME_MARKER env var. Has no visible effect — APC
+	/// sequences are silently consumed by terminals that don't recognize them.
+	frame_marker: bool = false,
 };
 
 pub fn defaultState() AppState {
@@ -176,6 +183,10 @@ pub fn renderOneFrame(
 		try stdout.writeAll(modal);
 		try stdout.flush();
 		state.needs_redraw = false;
+		if (state.frame_marker) {
+			try stdout.writeAll("\x1b_=FRAME=\x1b\\");
+			try stdout.flush();
+		}
 		return;
 	}
 
@@ -294,6 +305,11 @@ pub fn renderOneFrame(
 	try stdout.flush();
 	state.needs_redraw = false;
 	state.last_rendered_glyph_mode = state.glyph_mode;
+
+	if (state.frame_marker) {
+		try stdout.writeAll("\x1b_=FRAME=\x1b\\");
+		try stdout.flush();
+	}
 
 	scheduler.requestWork();
 }
