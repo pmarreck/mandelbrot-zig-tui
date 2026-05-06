@@ -256,6 +256,36 @@ test "CacheStack findCoveringLevel: zoom-out (step doesn't match) misses" {
     try testing.expect(cov == null);
 }
 
+test "CacheStack findCoveringLevel: max_iter mismatch is allowed (zoom-in semantics)" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var stack = cache.CacheStack.init();
+    defer stack.deinit(allocator);
+
+    // Level 0 / Level 1 built with max_iter=256 (the current viewport).
+    try stack.initForViewport(allocator, 0.0, 0.0, 1.0, 10, 10, 256, 1.0);
+    try stack.createLevel(allocator, 1);
+    stack.levels[1].?.complete = true;
+
+    const lvl0 = stack.levels[0].?;
+    // Simulate a 2x zoom-in: same center, half step. adaptiveMaxIter would
+    // bump the new viewport's max_iter to 306 (256 + 50). Pre-fix this
+    // mismatch caused findCoveringLevel to return null and fall through to
+    // a fresh compute; now it should still hit (with documented halo
+    // trade-off near the set boundary).
+    const cov = stack.findCoveringLevel(
+        0.0 - 5.0 * (lvl0.step_re / 2.0),
+        0.0 - 5.0 * (lvl0.step_im / 2.0),
+        lvl0.step_re / 2.0,
+        lvl0.step_im / 2.0,
+        10, 10, 306,
+    );
+    try testing.expect(cov != null);
+    try testing.expectEqual(@as(u8, 1), cov.?.level_idx);
+}
+
 test "CacheStack findCoveringLevel: 2x zoom-in at corner exceeds level bbox" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();

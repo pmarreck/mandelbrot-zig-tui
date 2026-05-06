@@ -287,28 +287,35 @@ pub fn computeRegionDirect(level: *cache_mod.CacheLevel) void {
 	level.complete = true;
 }
 
-/// Arguments for the offset worker thread.
-const OffsetWorkerArgs = struct {
+/// Arguments for the doubling worker thread.
+const DoublingWorkerArgs = struct {
 	child: *cache_mod.CacheLevel,
-	col_start: u32, // 0 or 1
-	row_start: u32, // 0 or 1
+	thread_id: u32,
+	num_threads: u32,
 	gen: ?*const std.atomic.Value(u32),
 	expected: u32,
 };
 
-/// Worker function: fills one of the 3 offset patterns.
-/// Each thread writes to rows starting at row_start with stride 2,
-/// columns starting at col_start with stride 2.
-fn offsetWorker(args: OffsetWorkerArgs) void {
+/// Worker function: handles a row stride of the doubling step.
+/// Each thread processes rows starting at thread_id with stride num_threads.
+/// For even rows, only odd columns need new compute (even-col samples were
+/// inherited from parent via inheritFromParent). For odd rows, every column
+/// is new. This replaces the old fixed 3-thread offset-pattern decomposition,
+/// which left 9 cores idle on a 12-core box during background prefetch.
+fn doublingWorker(args: DoublingWorkerArgs) void {
 	const use_f64 = args.child.step_re > F64_STEP_THRESHOLD;
-	var row: u32 = args.row_start;
-	while (row < args.child.height) : (row += 2) {
+	var row: u32 = args.thread_id;
+	while (row < args.child.height) : (row += args.num_threads) {
 		// Check cancellation every row
 		if (args.gen) |g| {
 			if (g.load(.acquire) != args.expected) return;
 		}
-		var col: u32 = args.col_start;
-		while (col < args.child.width) : (col += 2) {
+		// Even row → only odd cols are new (even cols inherited).
+		// Odd row → all cols are new (no inheritance).
+		const col_start: u32 = if (row & 1 == 0) 1 else 0;
+		const col_step: u32 = if (row & 1 == 0) 2 else 1;
+		var col: u32 = col_start;
+		while (col < args.child.width) : (col += col_step) {
 			const pt = args.child.pointAt(col, row);
 			if (use_f64) {
 				const c_re: f64 = @floatCast(pt.re);
@@ -323,10 +330,10 @@ fn offsetWorker(args: OffsetWorkerArgs) void {
 	}
 }
 
-/// Compute the 3 offset patterns to double resolution from parent to child.
-/// Child must be 2x parent dimensions with even-indexed points already inherited
-/// via `child.inheritFromParent(parent)`.
-/// Spawns 3 threads (odd-col/even-row, even-col/odd-row, odd-col/odd-row).
+/// Double resolution from parent to child using all available cores. Child
+/// must be 2× parent dimensions with even-indexed points already inherited
+/// via `child.inheritFromParent(parent)`. Each spawned thread handles a row
+/// stride and fills the new (non-inherited) samples for those rows.
 /// If generation is non-null, threads check it per-row for cancellation.
 /// Sets child.complete = true only if computation was not cancelled.
 pub fn computeDoubling(
@@ -337,34 +344,27 @@ pub fn computeDoubling(
 	_ = parent; // Parent data already inherited into child's even-even slots
 
 	const expected_gen: u32 = if (generation) |g| g.load(.acquire) else 0;
+	const n: u32 = @min(autoThreadCount(), child.height);
+	if (n == 0) {
+		child.complete = true;
+		return;
+	}
 
-	var threads: [3]std.Thread = undefined;
-	// Thread 1: odd col, even row
-	threads[0] = try std.Thread.spawn(.{}, offsetWorker, .{OffsetWorkerArgs{
-		.child = child,
-		.col_start = 1,
-		.row_start = 0,
-		.gen = generation,
-		.expected = expected_gen,
-	}});
-	// Thread 2: even col, odd row
-	threads[1] = try std.Thread.spawn(.{}, offsetWorker, .{OffsetWorkerArgs{
-		.child = child,
-		.col_start = 0,
-		.row_start = 1,
-		.gen = generation,
-		.expected = expected_gen,
-	}});
-	// Thread 3: odd col, odd row
-	threads[2] = try std.Thread.spawn(.{}, offsetWorker, .{OffsetWorkerArgs{
-		.child = child,
-		.col_start = 1,
-		.row_start = 1,
-		.gen = generation,
-		.expected = expected_gen,
-	}});
-
-	for (&threads) |*t| t.join();
+	var threads: [MAX_THREADS]std.Thread = undefined;
+	var i: u32 = 0;
+	while (i < n) : (i += 1) {
+		threads[i] = try std.Thread.spawn(.{}, doublingWorker, .{DoublingWorkerArgs{
+			.child = child,
+			.thread_id = i,
+			.num_threads = n,
+			.gen = generation,
+			.expected = expected_gen,
+		}});
+	}
+	var j: u32 = 0;
+	while (j < n) : (j += 1) {
+		threads[j].join();
+	}
 
 	// Check if computation completed (wasn't cancelled)
 	if (generation) |g| {

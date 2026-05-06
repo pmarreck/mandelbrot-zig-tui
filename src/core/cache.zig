@@ -278,7 +278,23 @@ pub const CacheStack = struct {
         while (i < NUM_LEVELS) : (i += 1) {
             const level = self.levels[i] orelse continue;
             if (!level.complete) continue;
-            if (level.max_iter != new_max_iter) continue;
+            // max_iter is intentionally NOT required to match. Rationale:
+            //   - For escaping points (iter < level.max_iter), the smooth
+            //     iteration value is independent of max_iter — always
+            //     correct to copy.
+            //   - level.max_iter > new_max_iter: cached data has MORE
+            //     accurate INTERIOR detection; fully correct.
+            //   - level.max_iter < new_max_iter: some points marked
+            //     INTERIOR in the cache might actually escape between
+            //     level.max_iter and new_max_iter. They render as black
+            //     instead of palette color — a small "halo" near the set
+            //     boundary, bounded by the max_iter delta (typically 50
+            //     per 2× zoom step from adaptiveMaxIter).
+            // If the strict check were left in, prefetch would NEVER fire
+            // on zoom-in: adaptiveMaxIter bumps max_iter on every 2× zoom,
+            // so Level 1 (built at the previous viewport's max_iter) is
+            // always 50 short of what the new viewport requests.
+            _ = new_max_iter;  // accepted; not used for rejection
             if (level.step_re != new_step_re or level.step_im != new_step_im) continue;
 
             // Compute integer offsets, allowing a tiny epsilon for the

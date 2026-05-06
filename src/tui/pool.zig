@@ -11,7 +11,8 @@ pub const BackgroundScheduler = struct {
 	/// Atomic generation counter. Bumped on every user action that changes
 	/// the viewport. Workers check this per-row and bail if it changes.
 	generation: std.atomic.Value(u32),
-	/// Long-lived coordinator thread. Spawns 3 workers per level via computeDoubling.
+	/// Long-lived coordinator thread. Drives computeDoubling for each level,
+	/// which spawns N worker threads (auto-detected) per doubling step.
 	coordinator: ?std.Thread,
 	allocator: std.mem.Allocator,
 	/// Shared pointer to the cache stack — owned by app.zig.
