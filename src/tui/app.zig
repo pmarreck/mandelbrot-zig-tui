@@ -371,6 +371,14 @@ pub fn renderOneFrame(
 		state.glyph_mode == .kitty and
 		state.last_rendered_glyph_mode == .kitty)
 	{
+		// Re-place the kitty image. The image data is still in the
+		// terminal's storage by ID 1 from the prior frame, but the
+		// PLACEMENT may have been erased by clearScreen above (terminal-
+		// dependent: kitty preserves placements through ED, ghostty does
+		// not). a=p re-creates the placement at cursor home using the
+		// stored image data — tiny escape, no retransmission.
+		try stdout.writeAll("\x1b[H");
+		try terminal.placeKittyImageById(stdout, 1);
 		const info = try renderer.renderKittyInfoBarOnly(
 			render_state,
 			state.term_width,

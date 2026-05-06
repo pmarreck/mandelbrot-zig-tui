@@ -180,6 +180,19 @@ pub fn deleteKittyImageById(writer: anytype, id: u32) !void {
 	try writer.writeAll(seq);
 }
 
+/// Place an EXISTING kitty-graphics-protocol image (already in the terminal's
+/// image cache from a prior a=T transmission) at the current cursor position
+/// using its ID. Used after clearScreen to restore the image — `\x1b[2J`
+/// erases image placements on some terminals (e.g. ghostty) while preserving
+/// the underlying image data. a=p re-creates the placement without
+/// retransmitting the (multi-megabyte) base64 RGB payload. q=2 suppresses
+/// any response.
+pub fn placeKittyImageById(writer: anytype, id: u32) !void {
+	var buf: [64]u8 = undefined;
+	const seq = std.fmt.bufPrint(&buf, "\x1b_Ga=p,i={d},q=2\x1b\\", .{id}) catch return;
+	try writer.writeAll(seq);
+}
+
 // ── SIGWINCH ────────────────────────────────────────────────────────
 
 /// Install a SIGWINCH handler that sets the atomic resize flag.
@@ -290,6 +303,7 @@ test "terminal module compiles" {
 		_ = &getTermSizePosix;
 		_ = &getCellPixelSizePosix;
 		_ = &deleteKittyImageById;
+		_ = &placeKittyImageById;
 		_ = &detectKittyGraphicsSupport;
 		_ = &stdinIsTty;
 	}

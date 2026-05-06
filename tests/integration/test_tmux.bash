@@ -58,30 +58,42 @@ fail() {
 }
 
 # Set up a tmux session running the binary with frame-marker instrumentation,
-# and start a `tr | grep` consumer that emits one line per frame to fd 4.
-# Globals populated: SESSION, PIPE_PATH, MARKER_FD (a number, conventionally 4),
-# MARKER_PROC_PID. Caller MUST call `teardown` to release them.
+# AND mirror every byte the pane emits into a regular log file. Two consumers
+# of that log:
+#   - fd 4: a `tr ESC \n | grep =FRAME=` pipeline that surfaces frame markers
+#     for event-driven wait_frame (no polling sleeps).
+#   - LOG_PATH: the raw byte stream, available for post-hoc assertions on
+#     specific escape sequences (e.g. kitty graphics commands like a=p,i=1
+#     which capture-pane can't see because they don't materialize as cell
+#     text).
+# Globals populated: SESSION, LOG_PATH. Caller MUST call `teardown`.
 setup() {
 	SESSION="mandel_test_$1_$$"
-	PIPE_PATH=$(mktemp -u "${TMPDIR:-/tmp}/mandel_pipe.XXXXXX")
-	mkfifo "$PIPE_PATH"
+	LOG_PATH=$(mktemp "${TMPDIR:-/tmp}/mandel_log.XXXXXX")
 	local cols="${2:-140}" rows="${3:-24}"
 	shift 3
-	# Run inside `env` so the marker var is scoped to the test child.
 	tmux new-session -d -s "$SESSION" -x "$cols" -y "$rows" \
 		"env MANDELBROT_FRAME_MARKER=1 $BINARY $*"
-	tmux pipe-pane -t "$SESSION" -o "cat > $PIPE_PATH"
-	# tr ESC → newline so grep can match line-by-line; stdbuf disables tr's
-	# default 4KB block buffering (without it, early markers sit in tr's
-	# stdout buffer and never reach grep before the per-test timeout).
-	# Read end is fd 4 in the parent shell.
-	exec 4< <(stdbuf -o0 tr '\033' '\n' < "$PIPE_PATH" | grep --line-buffered '=FRAME=')
+	tmux pipe-pane -t "$SESSION" -o "cat > $LOG_PATH"
+	# tail -F follows the file as it grows (works for any number of
+	# concurrent readers, unlike a fifo which is consumed). tr ESC → \n
+	# turns escape sequences into lines so grep can scan them. stdbuf
+	# disables tr's default 4 KB block buffering — without it, early
+	# markers sit in tr's stdout buffer and miss the per-test timeout.
+	exec 4< <(stdbuf -o0 tail -n+1 -F "$LOG_PATH" 2>/dev/null | stdbuf -o0 tr '\033' '\n' | grep --line-buffered '=FRAME=')
 }
 
 teardown() {
 	tmux kill-session -t "$SESSION" 2>/dev/null || true
 	exec 4<&- 2>/dev/null || true
-	rm -f "$PIPE_PATH"
+	rm -f "$LOG_PATH"
+}
+
+# Search the raw byte log for a fixed string. Returns 0 on hit, non-zero on
+# miss. Used by tests that need to assert specific escape sequences emitted
+# by the binary that capture-pane can't see (kitty graphics commands etc.).
+log_contains() {
+	grep -F -- "$1" "$LOG_PATH" >/dev/null 2>&1
 }
 
 # Block until the next frame marker arrives on fd 4 (or timeout).
@@ -285,7 +297,63 @@ else
 fi
 teardown
 
-# ── Test 12: memory leak stress — drive every allocating code path with
+# ── Test 12: kitty-mode help modal close redraws the underlying view ───
+# Catches the regression where closing the help modal in kitty mode left
+# the screen blank — the modal-close clearScreen erased the kitty image
+# placement (terminal-dependent: some implementations keep image
+# placements through ED, some don't), and the fast path only re-emits
+# the info bar, not the image.
+#
+# This test asserts that after open(?) → close(Esc), the info bar text
+# (MANDELBROT_CENTER_RE) is visible AND the modal text is gone. If the
+# info bar is missing, the fast path itself failed to emit it. tmux
+# capture-pane can't see the kitty image bytes (those are graphics
+# escapes, not cell text), but a blank-screen regression manifests as
+# "info bar missing" too because clearScreen wipes everything.
+setup "kitty_modal_close" 140 24 --kitty --force-kitty
+wait_frame || true  # initial render
+tmux send-keys -t "$SESSION" "?"
+wait_frame || true  # modal render
+# Sanity: modal text is currently visible
+if ! capture | grep -q "keys & mouse"; then
+	fail "kitty modal close redraws info bar (precondition)" "modal didn't open"
+	teardown
+	# Don't continue
+else
+	# Snapshot the log size so we can scope post-Esc emission checks to
+	# bytes emitted AFTER this point (avoids false positives from the
+	# initial kitty image transmission).
+	pre_esc_size=$(wc -c < "$LOG_PATH")
+	tmux send-keys -t "$SESSION" Escape
+	if wait_frame; then
+		out=$(capture)
+		if echo "$out" | grep -q "MANDELBROT_CENTER_RE" && ! echo "$out" | grep -q "keys & mouse"; then
+			pass "kitty modal close redraws info bar"
+		else
+			fail "kitty modal close redraws info bar" "info bar missing or modal still visible"
+		fi
+
+		# Image-restoration check: after closing the modal, the fast path
+		# wipes the modal text via clearScreen. Some terminals (kitty)
+		# preserve image placements through ED; some (ghostty) erase
+		# them. To survive both, the fast path must re-place the image
+		# via the kitty graphics 'a=p' (put existing image) command.
+		# Assert that command appears in the byte stream emitted AFTER
+		# we sent Esc.
+		post_esc_bytes=$(tail -c +$((pre_esc_size + 1)) "$LOG_PATH")
+		if printf '%s' "$post_esc_bytes" | grep -qE 'a=p,i=1'; then
+			pass "kitty modal close re-places image (a=p,i=1 emitted)"
+		else
+			fail "kitty modal close re-places image (a=p,i=1 emitted)" \
+				"no 'a=p,i=1' escape after Esc — image will vanish on terminals that erase placements through clearScreen"
+		fi
+	else
+		fail "kitty modal close redraws info bar" "no frame marker after Esc"
+	fi
+	teardown
+fi
+
+# ── Test 13: memory leak stress — drive every allocating code path with
 #             a barrage of zoom-in / pan / zoom-out / mode-cycle / modal
 #             actions, then quit cleanly via 'q'. main.zig sets GPA's
 #             safety=true unconditionally, so the `defer gpa.deinit()`
