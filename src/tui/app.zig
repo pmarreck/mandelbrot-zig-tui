@@ -317,7 +317,6 @@ pub fn renderOneFrame(
 		}
 	}
 
-	// Dispatch to the correct renderer based on glyph mode
 	const render_state = renderer.RenderState{
 		.center_re = state.center_re,
 		.center_im = state.center_im,
@@ -327,92 +326,69 @@ pub fn renderOneFrame(
 		.glyph_mode = state.glyph_mode,
 	};
 
-	// On transition out of kitty mode, delete the lingering image so it doesn't
-	// stay painted under the new cell-mode output. Idempotent on the terminal
-	// side; cheap enough to send from any mode but only sent on actual transition.
+	// Mode-transition / modal-close terminal cleanups. These all run BEFORE
+	// the kitty fast-path check below — they wipe stale cell text from the
+	// previous frame (modal box chars, residual density glyphs) so the image
+	// underneath comes through cleanly when we don't re-emit it.
+
+	// Transition out of kitty mode: free the placed image and clear cells.
 	if (state.glyph_mode != .kitty and state.last_rendered_glyph_mode == .kitty) {
 		try terminal.deleteKittyImageById(stdout, 1);
 		try terminal.clearScreen(stdout);
 	}
 
-	// On transition INTO kitty mode, clear residual cell text/bg from the
-	// previous mode (block quadrants, density chars). With z=INT32_MIN on
-	// the kitty image, any cell with non-default bg attributes — including
-	// stale cells from an old density/blocks render — fully covers the
-	// image. Without this clear, those leftover glyphs ghost on top of
-	// the new kitty frame.
+	// Transition INTO kitty mode from a different mode: clear residual cell
+	// text/bg from the previous mode. With z=INT32_MIN on the kitty image,
+	// non-default bg attrs in cells fully cover the image; without this
+	// clear, leftover glyphs ghost on top of the new kitty frame.
 	if (state.glyph_mode == .kitty and state.last_rendered_glyph_mode != null and state.last_rendered_glyph_mode.? != .kitty) {
 		try terminal.clearScreen(stdout);
 	}
 
-	// Fast path: redrawing in kitty mode with an unchanged viewport (e.g.
-	// after closing the help modal). The kitty image is still placed in
-	// the terminal — clearScreen wipes cell text but does NOT remove image
-	// placements — so we can skip the entire iter compute → RGB convert →
-	// base64 → ~1 MB retransmit cycle and just redraw the info bar.
-	// The image reappears automatically because cells we don't touch keep
-	// default attributes and let the z=INT32_MIN image show through.
-	if (state.glyph_mode == .kitty and
-		state.last_rendered_glyph_mode == .kitty)
-	{
-		// Verify the viewport is unchanged from the previous kitty render
-		// (same bit-exact match that the Level 0 hit path uses below).
-		if (cache_stack.levels[0]) |level| {
-			const w_check: f128 = @floatFromInt(buf_width);
-			const h_check: f128 = @floatFromInt(buf_height);
-			const aspect_check: f128 = @floatCast(aspect);
-			const exp_range_re: f128 = 4.0 / state.zoom;
-			const exp_range_im: f128 = exp_range_re * (h_check / w_check) / aspect_check;
-			const exp_origin_re: f128 = state.center_re - exp_range_re / 2.0;
-			const exp_origin_im: f128 = state.center_im - exp_range_im / 2.0;
-			const exp_step_re: f128 = exp_range_re / w_check;
-			const exp_step_im: f128 = exp_range_im / h_check;
-
-			if (level.complete and
-				level.width == buf_width and
-				level.height == buf_height and
-				level.max_iter == state.max_iter and
-				level.origin_re == exp_origin_re and
-				level.origin_im == exp_origin_im and
-				level.step_re == exp_step_re and
-				level.step_im == exp_step_im)
-			{
-				// Viewport matches the existing kitty image. Just redraw the
-				// info bar — the image stays placed and visible.
-				const render_state_fast = renderer.RenderState{
-					.center_re = state.center_re,
-					.center_im = state.center_im,
-					.zoom = state.zoom,
-					.max_iter = state.max_iter,
-					.show_info = state.show_info,
-					.glyph_mode = state.glyph_mode,
-				};
-				const info = try renderer.renderKittyInfoBarOnly(
-					render_state_fast,
-					state.term_width,
-					state.term_height,
-					allocator,
-				);
-				defer allocator.free(info);
-				try stdout.writeAll(info);
-				try stdout.flush();
-				state.needs_redraw = false;
-				if (state.frame_marker) {
-					try stdout.writeAll("\x1b_=FRAME=\x1b\\");
-					try stdout.flush();
-				}
-				return;
-			}
-		}
-	}
-
-	// On transition out of the help modal, clear the screen so any modal box
-	// chars left in cells don't show through the next frame. Cell-mode renders
-	// (density/blocks) fill every cell anyway, but kitty mode only places the
-	// image — without a clear, the modal text would persist on top of the new
-	// image (now that the image sits at z=-1 to allow overlays).
+	// Modal close → clearScreen so modal box-drawing chars don't ghost
+	// through. Cell-mode renders fill every cell anyway, but kitty's
+	// image-placement command alone doesn't overwrite cell text.
 	if (state.last_rendered_modal and !state.show_help) {
 		try terminal.clearScreen(stdout);
+	}
+
+	// Fast path: kitty mode with an unchanged viewport (e.g. modal close).
+	// `cache_hit` from the Level 0 exact-match check above tells us the
+	// terminal's already-placed kitty image is the right image for the
+	// current state — clearScreen wipes cell text but does NOT remove
+	// image placements, so we just need to redraw the info bar over its
+	// row. Image reappears automatically because cells we don't touch
+	// keep default attributes and let the z=INT32_MIN image show through.
+	//
+	// Crucially, this is gated by `cache_hit` from path 1 (Level 0 exact
+	// match for the *new* viewport). Path 2 (deeper-level extract) and
+	// path 3 (fresh compute) BOTH replace iter_buf with new data and
+	// reinit Level 0 to the new viewport — they correspond to a viewport
+	// CHANGE, where the terminal's existing image is now stale and must
+	// be retransmitted. Only path 1 means "nothing has actually changed
+	// in the iteration grid".
+	if (cache_hit and
+		state.glyph_mode == .kitty and
+		state.last_rendered_glyph_mode == .kitty)
+	{
+		const info = try renderer.renderKittyInfoBarOnly(
+			render_state,
+			state.term_width,
+			state.term_height,
+			allocator,
+		);
+		defer allocator.free(info);
+		try stdout.writeAll(info);
+		try stdout.flush();
+		state.needs_redraw = false;
+		state.last_rendered_modal = false;
+		// last_rendered_glyph_mode stays .kitty
+		if (state.frame_marker) {
+			try stdout.writeAll("\x1b_=FRAME=\x1b\\");
+			try stdout.flush();
+		}
+		scheduler.requestWork();
+		return;
 	}
 
 	const frame = switch (state.glyph_mode) {

@@ -236,7 +236,56 @@ else
 fi
 teardown
 
-# ── Test 10: memory leak stress — drive every allocating code path with
+# ── Test 10: kitty-mode '+' zoom updates the rendered frame ─────────────
+# Catches the regression where the modal-close fast path was firing on
+# every kitty redraw and short-circuiting around the iter compute even
+# when the viewport had changed. Asserts that pressing '+' produces an
+# info bar reflecting the new zoom level (we can't directly assert on
+# the kitty image bytes because tmux capture-pane shows cell text only,
+# but the info bar is plain text and zoom is part of it).
+setup "kitty_zoom" 140 24 --kitty --force-kitty
+wait_frame || true  # initial render
+zoom_before=$(capture | grep -oE 'MANDELBROT_ZOOM=[^ ]+' | head -1)
+tmux send-keys -t "$SESSION" "+"
+if wait_frame; then
+	zoom_after=$(capture | grep -oE 'MANDELBROT_ZOOM=[^ ]+' | head -1)
+	if [ -n "$zoom_before" ] && [ -n "$zoom_after" ] && [ "$zoom_before" != "$zoom_after" ]; then
+		pass "kitty + zoom updates info bar (zoom changed)"
+	else
+		fail "kitty + zoom updates info bar (zoom changed)" "before='$zoom_before' after='$zoom_after'"
+	fi
+else
+	fail "kitty + zoom updates info bar (zoom changed)" "no frame marker after +"
+fi
+teardown
+
+# ── Test 11: kitty-mode mouse click updates the rendered frame ──────────
+# Same regression coverage but driven via mouse SGR escapes — sends a
+# left-click at column 30, row 10 (1-based in SGR mouse protocol). The
+# button-press code 0 ('M' suffix), then release ('m' suffix). On
+# release with no drag, processEvent zooms in 2× at the click point.
+setup "kitty_click" 140 24 --kitty --force-kitty
+wait_frame || true
+center_re_before=$(capture | grep -oE 'MANDELBROT_CENTER_RE=[^ ]+' | head -1)
+zoom_before=$(capture | grep -oE 'MANDELBROT_ZOOM=[^ ]+' | head -1)
+# SGR mouse: ESC [ < button ; col ; row M (press) / m (release).
+# button 0 = left button, no modifiers.
+tmux send-keys -t "$SESSION" -H 1B 5B 3C 30 3B 33 30 3B 31 30 4D
+tmux send-keys -t "$SESSION" -H 1B 5B 3C 30 3B 33 30 3B 31 30 6D
+if wait_frame; then
+	center_re_after=$(capture | grep -oE 'MANDELBROT_CENTER_RE=[^ ]+' | head -1)
+	zoom_after=$(capture | grep -oE 'MANDELBROT_ZOOM=[^ ]+' | head -1)
+	if [ "$center_re_before" != "$center_re_after" ] || [ "$zoom_before" != "$zoom_after" ]; then
+		pass "kitty mouse click updates info bar (center or zoom changed)"
+	else
+		fail "kitty mouse click updates info bar (center or zoom changed)" "center_before='$center_re_before' center_after='$center_re_after' zoom_before='$zoom_before' zoom_after='$zoom_after'"
+	fi
+else
+	fail "kitty mouse click updates info bar (center or zoom changed)" "no frame marker after click"
+fi
+teardown
+
+# ── Test 12: memory leak stress — drive every allocating code path with
 #             a barrage of zoom-in / pan / zoom-out / mode-cycle / modal
 #             actions, then quit cleanly via 'q'. main.zig sets GPA's
 #             safety=true unconditionally, so the `defer gpa.deinit()`
