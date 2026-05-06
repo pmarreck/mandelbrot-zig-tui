@@ -13,9 +13,10 @@ An interactive terminal-based Mandelbrot set explorer written in pure Zig, capab
 
 ### Rendering
 - **True-color 24-bit rendering** — ANSI `\x1b[38;2;R;G;B` escapes with the Bernstein polynomial palette from the Wikipedia Mandelbrot article; smooth iteration count via `n + 1 - log2(log2(|z|))` eliminates color banding
-- **Two glyph modes, toggleable at runtime**:
+- **Three glyph modes, toggleable at runtime**:
   - **Density** (default): ASCII density characters `.:-=+*#%@` provide luminance texture alongside color
   - **Blocks**: Unicode quadrant characters (`▖▗▘▙▚▛▜▝▞▟▀▄▌▐█`) render each terminal cell as a 2×2 sub-pixel grid with two-color FG+BG via median-split clustering — 4× spatial resolution for the Mandelbrot set's intricate boundary
+  - **Kitty**: true per-pixel rendering via the [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) (kitty, Ghostty, WezTerm, recent Konsole). Frame is rasterized at native cell-pixel resolution and sent as chunked base64 RGB. Auto-detected via active `a=q` probe with env-var fallback; `--force-kitty` overrides for SSH sessions where env vars are stripped. Image is placed at `z=-1` so the help modal and info bar overlay correctly.
 - **Adaptive iterations** — max iterations auto-scale with zoom depth via `base + 50 * log2(zoom)`
 - **SIGWINCH-responsive** — re-renders on terminal resize without state loss
 
@@ -27,7 +28,7 @@ An interactive terminal-based Mandelbrot set explorer written in pure Zig, capab
 
 ### Interaction
 - **Mouse navigation** — left-click to zoom in, right-click to zoom out, drag to pan (live re-render), scroll wheel zoom at cursor
-- **Keyboard navigation** — `+`/`-` zoom at center, arrow keys pan, `[`/`]` adjust max iterations, `i` toggle info bar, `g` cycle glyph mode, `q` quit
+- **Keyboard navigation** — `+`/`-` zoom at center, arrow keys pan, `[`/`]` adjust max iterations, `i` toggle info bar, `g` cycle glyph mode, `?`/`h` help modal overlay (any key closes), `q` quit
 - **Bookmarkable views** — info bar shows a reproducible command (env vars) to restore the exact view from any terminal size
 - **Benchmark mode** — `--bench-zoom-sequence N` renders N progressive zoom frames with per-frame timing, perfect for `hyperfine` or scripted perf testing
 
@@ -54,6 +55,10 @@ nix develop -c zig build run
 
 # Run benchmarks (ReleaseFast, three scenarios with regression detection)
 ./bm
+
+# Run every check declared in flake.nix (build + unit + CLI + tmux PTY tests).
+# Pulls tmux only into the tmux-test derivation — does NOT pollute `nix develop`.
+nix flake check
 ```
 
 The binary lands at `zig-out/bin/mandelbrot`.
@@ -69,7 +74,11 @@ Options:
   --single-frame             Render one frame to stdout and exit
   --bench-zoom-sequence N    Render N zoom-in frames for perf testing, print timing, exit
   --bench-quiet              With --bench-zoom-sequence: suppress per-frame output
-  --glyph=MODE               Initial glyph mode: density (default) or blocks
+  --glyph=MODE               Initial glyph mode: density (default), blocks, or kitty
+  --blocks                   Shortcut for --glyph=blocks (== MANDELBROT_SUBBLOCK=1)
+  --kitty                    Shortcut for --glyph=kitty (true per-pixel rendering)
+  --force-kitty              Treat the terminal as kitty-graphics capable even if
+                             auto-detection fails (e.g. SSH where env vars are stripped)
 
 Controls:
   Left-click     Zoom in 2x at click point
@@ -81,17 +90,21 @@ Controls:
   Arrow keys     Pan
   [/]            Decrease/increase max iterations
   i              Toggle info bar
-  g              Cycle glyph mode (density, blocks)
+  g              Cycle glyph mode (density, blocks, kitty if available)
+  ? / h          Show keyboard + mouse help modal (any key to close)
   q / Ctrl-C     Quit
 
 Environment variables (view injection / bookmarking):
-  MANDELBROT_CENTER_RE   Center real coordinate
-  MANDELBROT_CENTER_IM   Center imaginary coordinate
-  MANDELBROT_ZOOM        Zoom level
-  MANDELBROT_MAX_ITER    Max iteration count
-  MANDELBROT_COLS        Override terminal width
-  MANDELBROT_ROWS        Override terminal height
-  MANDELBROT_SUBBLOCK    Set to true/1/yes/on to start in blocks mode
+  MANDELBROT_CENTER_RE     Center real coordinate
+  MANDELBROT_CENTER_IM     Center imaginary coordinate
+  MANDELBROT_ZOOM          Zoom level
+  MANDELBROT_MAX_ITER      Max iteration count
+  MANDELBROT_COLS          Override terminal width
+  MANDELBROT_ROWS          Override terminal height
+  MANDELBROT_SUBBLOCK      Set to true/1/yes/on to start in blocks mode
+  MANDELBROT_FRAME_MARKER  Test instrumentation: emit an APC sync marker after each
+                           frame flush (silent on real terminals; captured by tmux
+                           pipe-pane in the integration test harness)
 ```
 
 ### Animation mode
@@ -130,6 +143,31 @@ Other interesting zoom targets to try:
 - Frame timing stats print to stderr at the end
 - Without `--exit-after`, the animation drops into interactive mode at the final state so you can continue exploring
 
+## Testing
+
+Three layers, all wired into `nix flake check` so CI exercises the full stack:
+
+| Layer | Runner | What it verifies |
+|-------|--------|------------------|
+| Unit tests | `zig build test` (or `checks.test`) | Pure-function semantics: viewport math, DD arithmetic, escape-time correctness, color palette, cache pyramid, animation interpolation, input parsing, renderer output shape |
+| CLI tests | `tests/cli/test_cli.bash` (or `checks.cli-test`) | Command-line surface: `--help` output, exit codes, `--single-frame` byte patterns, `--kitty` env gating, `--force-kitty` bypass, `--animate` validation |
+| **PTY integration** | `tests/integration/test_tmux.bash` (or `checks.tmux-test`) | End-to-end interactive behavior in a real PTY: initial render, key handling (`g`, `?`, `h`, `Esc`, `i`, `q`), help modal open/close, SIGWINCH redraw, `--force-kitty` startup |
+
+The integration tests are **event-driven, not poll-and-sleep** — there are no `sleep` calls in the test code. The mechanism:
+
+1. The app, when `MANDELBROT_FRAME_MARKER=1` is set, emits an APC sync marker (`ESC _ = F R A M E = ESC \`) after every frame flush. APC is silently consumed by terminals (invisible), but tmux's `pipe-pane` captures it raw.
+2. Each test attaches `pipe-pane` to a FIFO, runs `stdbuf -o0 tr ESC \n | grep --line-buffered =FRAME=` to surface markers as lines on file descriptor 4, and uses `read -t 5 -u 4` to block until the next marker arrives.
+3. `stdbuf -o0` disables `tr`'s 4 KB block buffering — without it, early markers sit in `tr`'s stdout buffer and miss the per-test timeout.
+
+Result: the full integration suite runs in ~2.7 seconds on a release build, and there's no flake-by-design from arbitrary sleep durations on slow CI.
+
+```bash
+zig build test                              # unit
+bash tests/cli/test_cli.bash                # CLI smoke
+bash tests/integration/test_tmux.bash       # PTY integration
+nix flake check                             # all of the above + build, sandboxed & reproducible
+```
+
 ## Architecture
 
 ```
@@ -142,12 +180,21 @@ src/
     cache.zig              5-level resolution pyramid (CacheLevel + CacheStack)
     animation.zig          Pure frame interpolation (linear center + log zoom)
   tui/                     I/O adapter layer
-    terminal.zig           Raw mode, mouse (SGR 1002/1006), SIGWINCH, cursor, tty detection
+    terminal.zig           Raw mode, mouse (SGR 1002/1006), SIGWINCH, cursor, tty detection,
+                           cell pixel size (TIOCGWINSZ), kitty graphics probe (a=q + 200ms poll)
     input.zig              Byte stream → Event parser (pure)
-    renderer.zig           Pure: RenderState + iter_buf → ANSI buffer (density + blocks modes)
+    renderer.zig           Pure: RenderState + iter_buf → ANSI/kitty bytes (density + blocks +
+                           kitty modes; help modal overlay)
     pool.zig               Long-lived coordinator thread for background pre-computation
-    app.zig                Event loop + state machine + cache lifecycle + runAnimation
+    app.zig                Event loop + state machine + cache lifecycle + runAnimation +
+                           help modal capture + kitty image cleanup on transitions
   main.zig                 CLI args, env vars, entry point
+
+tests/
+  unit/                    Zig unit tests (per module)
+  cli/test_cli.bash        Black-box CLI tests (--help, --single-frame, --kitty gating, etc.)
+  integration/             PTY-driven tmux integration tests with frame-marker sync
+  benchmark/bench_render.zig
 ```
 
 The `core/` layer is 100% pure functions — no I/O, no allocations beyond caller-provided buffers, no side effects. This is the natural seam for a future C FFI.

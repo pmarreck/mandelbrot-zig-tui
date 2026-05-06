@@ -13,7 +13,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
-      - name: Build
-        run: nix build
-      - name: Test
-        run: nix develop -c zig build test -Doptimize=Debug
+      # `nix flake check` exercises every check declared in flake.nix:
+      #   - build       (Zig release build)
+      #   - test        (zig build test — unit tests)
+      #   - cli-test    (tests/cli/test_cli.bash)
+      #   - tmux-test   (tests/integration/test_tmux.bash, PTY-driven)
+      # tmux is pulled in as a nativeBuildInput only for the tmux-test
+      # derivation, so it doesn't bloat the dev shell or other checks.
+      - name: nix flake check
+        run: nix flake check --print-build-logs

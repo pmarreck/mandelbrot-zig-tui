@@ -72,6 +72,12 @@ pub const AppState = struct {
 	/// the MANDELBROT_FRAME_MARKER env var. Has no visible effect — APC
 	/// sequences are silently consumed by terminals that don't recognize them.
 	frame_marker: bool = false,
+	/// Tracks whether the most recent render was the help modal. On the
+	/// transition modal → frame, renderOneFrame issues a clearScreen so
+	/// that residual modal box-drawing chars don't ghost on top of the
+	/// next frame in kitty mode (where the kitty graphics command places
+	/// an image but does not overwrite cell text content).
+	last_rendered_modal: bool = false,
 };
 
 pub fn defaultState() AppState {
@@ -183,6 +189,7 @@ pub fn renderOneFrame(
 		try stdout.writeAll(modal);
 		try stdout.flush();
 		state.needs_redraw = false;
+		state.last_rendered_modal = true;
 		if (state.frame_marker) {
 			try stdout.writeAll("\x1b_=FRAME=\x1b\\");
 			try stdout.flush();
@@ -294,6 +301,15 @@ pub fn renderOneFrame(
 		try terminal.clearScreen(stdout);
 	}
 
+	// On transition out of the help modal, clear the screen so any modal box
+	// chars left in cells don't show through the next frame. Cell-mode renders
+	// (density/blocks) fill every cell anyway, but kitty mode only places the
+	// image — without a clear, the modal text would persist on top of the new
+	// image (now that the image sits at z=-1 to allow overlays).
+	if (state.last_rendered_modal and !state.show_help) {
+		try terminal.clearScreen(stdout);
+	}
+
 	const frame = switch (state.glyph_mode) {
 		.density => try renderer.renderFrameFromBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator),
 		.blocks => try renderer.renderFrameFromBlocksBuffer(render_state, state.term_width, state.term_height, iter_buf, allocator),
@@ -305,6 +321,7 @@ pub fn renderOneFrame(
 	try stdout.flush();
 	state.needs_redraw = false;
 	state.last_rendered_glyph_mode = state.glyph_mode;
+	state.last_rendered_modal = false;
 
 	if (state.frame_marker) {
 		try stdout.writeAll("\x1b_=FRAME=\x1b\\");
