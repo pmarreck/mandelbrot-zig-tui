@@ -133,11 +133,13 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 				state.term_width = size.cols;
 				state.term_height = size.rows;
 				state.needs_redraw = true;
-				// Terminal size changed — cache is invalid.
-				// stop() bumps generation and joins the coordinator to prevent
-				// a data race with invalidateAll (cancel() alone would not).
+				// Terminal size changed — stop the scheduler so its workers
+				// don't race with the next render's cache mutation. We do
+				// NOT invalidate here: renderOneFrame's coverage check needs
+				// to *see* the old levels in order to extract from them
+				// (zoom-in prefetch). When no level matches, renderOneFrame
+				// invalidates and re-inits Level 0 itself.
 				scheduler.stop();
-				cache_stack.invalidateAll(allocator);
 			} else |_| {}
 		}
 
@@ -151,12 +153,15 @@ pub fn run(initial_state: AppState, allocator: std.mem.Allocator) !void {
 		const event = input.parseEvent(read_buf[0..n]);
 		const new_state = processEvent(state, event);
 
-		// If the viewport changed, the cache is stale. stop() joins the
-		// coordinator before we invalidate levels, avoiding a use-after-free
-		// race. The next render pass refills Level 0 and respawns via requestWork.
+		// Viewport changed — stop the background scheduler so its workers
+		// can't race with the next render's cache mutation. Crucially, do
+		// NOT invalidate the cache here; renderOneFrame needs the deeper
+		// levels to *still exist* so findCoveringLevel can extract a 2× /
+		// 4× zoom-in hit from them. renderOneFrame invalidates after the
+		// extraction succeeds (or after fresh compute, when neither level
+		// 0 nor any deeper level satisfied the new viewport).
 		if (viewportChanged(state, new_state)) {
 			scheduler.stop();
-			cache_stack.invalidateAll(allocator);
 		}
 		state = new_state;
 	}
@@ -330,6 +335,16 @@ pub fn renderOneFrame(
 		try terminal.clearScreen(stdout);
 	}
 
+	// On transition INTO kitty mode, clear residual cell text/bg from the
+	// previous mode (block quadrants, density chars). With z=INT32_MIN on
+	// the kitty image, any cell with non-default bg attributes — including
+	// stale cells from an old density/blocks render — fully covers the
+	// image. Without this clear, those leftover glyphs ghost on top of
+	// the new kitty frame.
+	if (state.glyph_mode == .kitty and state.last_rendered_glyph_mode != null and state.last_rendered_glyph_mode.? != .kitty) {
+		try terminal.clearScreen(stdout);
+	}
+
 	// On transition out of the help modal, clear the screen so any modal box
 	// chars left in cells don't show through the next frame. Cell-mode renders
 	// (density/blocks) fill every cell anyway, but kitty mode only places the
@@ -492,8 +507,9 @@ pub fn runAnimation(
 				state.term_width = size.cols;
 				state.term_height = size.rows;
 				state.needs_redraw = true;
+				// See run() above: stop scheduler, do NOT invalidate —
+				// renderOneFrame's coverage check needs the deeper levels.
 				scheduler.stop();
-				cache_stack.invalidateAll(allocator);
 			} else |_| {}
 		}
 
@@ -509,7 +525,6 @@ pub fn runAnimation(
 
 		if (viewportChanged(state, new_state)) {
 			scheduler.stop();
-			cache_stack.invalidateAll(allocator);
 		}
 		state = new_state;
 	}

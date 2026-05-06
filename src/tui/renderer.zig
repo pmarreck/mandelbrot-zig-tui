@@ -271,12 +271,18 @@ pub fn renderFrameKitty(
 		const is_last = (offset + this_chunk) == rgb_bytes.len;
 		const m_flag: u8 = if (is_last) '0' else '1';
 
-		// Header for this chunk. z=-1 places the image *below* text in the
-		// terminal's compositing order so that overlays (like the help modal
-		// or info bar) drawn into the same cells remain visible.
+		// Header for this chunk. z=INT32_MIN puts the image below text AND
+		// below cell background colors (per kitty graphics protocol: any z
+		// less than INT32_MIN/2 enables this regime). z=-1 alone would
+		// keep the image above cell bg, leaving overlays like the help
+		// modal — which uses an explicit black bg to cover image cells —
+		// looking transparent. With z=INT32_MIN, cells with any explicit
+		// bg color (modal interior, info bar reverse video) fully cover
+		// the image; cells we never write keep default attributes and
+		// show the image through.
 		var hdr_buf: [128]u8 = undefined;
 		const hdr = if (first_chunk)
-			std.fmt.bufPrint(&hdr_buf, "\x1b_Gf=24,s={d},v={d},a=T,t=d,i=1,q=2,z=-1,m={c};", .{ px_w, px_h, m_flag }) catch unreachable
+			std.fmt.bufPrint(&hdr_buf, "\x1b_Gf=24,s={d},v={d},a=T,t=d,i=1,q=2,z=-2147483648,m={c};", .{ px_w, px_h, m_flag }) catch unreachable
 		else
 			std.fmt.bufPrint(&hdr_buf, "\x1b_Gm={c};", .{m_flag}) catch unreachable;
 		try output.appendSlice(allocator, hdr);
