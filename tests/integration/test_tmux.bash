@@ -86,6 +86,11 @@ setup() {
 teardown() {
 	tmux kill-session -t "$SESSION" 2>/dev/null || true
 	exec 4<&- 2>/dev/null || true
+	# `tail -F` keeps watching the file even after we close fd 4 and rm
+	# the file — it doesn't exit on its own. Kill it explicitly using
+	# the per-test-unique LOG_PATH as a safe match string. Without this,
+	# every test run leaks a tail/tr/grep subshell.
+	pkill -f "tail.*$LOG_PATH" 2>/dev/null || true
 	rm -f "$LOG_PATH"
 }
 
