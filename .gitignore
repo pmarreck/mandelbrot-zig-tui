@@ -2,6 +2,7 @@ AGENTS.md
 CLAUDE.md
 jj_cheatsheet.md
 ZIG_RECENT_API_CHANGES*
+ZIG_0.15_TO_0.16_MIGRATION.md
 zig-out/
 zig-cache/
 .zig-cache/
