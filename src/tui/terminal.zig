@@ -98,7 +98,7 @@ pub fn clearScreen(writer: anytype) !void {
 ///      TERM_PROGRAM. Conservative; intentionally a last resort.
 /// --force-kitty in main.zig bypasses all of this when the user knows better.
 pub fn detectKittyGraphicsSupport() bool {
-	if (std.posix.getenv("KITTY_WINDOW_ID") != null) return true;
+	if (runtime.getEnv("KITTY_WINDOW_ID") != null) return true;
 	if (probeKittyGraphicsSupport()) return true;
 	return detectKittyGraphicsByEnv();
 }
@@ -107,12 +107,12 @@ pub fn detectKittyGraphicsSupport() bool {
 /// graphics. Used only when the active probe cannot run (e.g. stdin is not
 /// a TTY, such as `cmd | mandelbrot`). Don't rely on this if you can probe.
 fn detectKittyGraphicsByEnv() bool {
-	if (std.posix.getenv("TERM_PROGRAM")) |tp| {
+	if (runtime.getEnv("TERM_PROGRAM")) |tp| {
 		if (std.mem.eql(u8, tp, "ghostty")) return true;
 		if (std.mem.eql(u8, tp, "WezTerm")) return true;
 		if (std.mem.eql(u8, tp, "kitty")) return true;
 	}
-	if (std.posix.getenv("TERM")) |term| {
+	if (runtime.getEnv("TERM")) |term| {
 		if (std.mem.eql(u8, term, "xterm-kitty")) return true;
 		if (std.mem.eql(u8, term, "xterm-ghostty")) return true;
 	}
@@ -148,7 +148,9 @@ pub fn probeKittyGraphicsSupport() bool {
 	// i=31 is an arbitrary id we'll look for in the response so we don't
 	// confuse it with replies to other queries that may be in flight.
 	const query = "\x1b_Gi=31,a=q,t=d,f=24,s=1,v=1;AAAA\x1b\\";
-	_ = posix.write(stdout_fd, query) catch return false;
+	// std.posix.write was removed in Zig 0.16; use std.c.write directly.
+	const wrote = std.c.write(stdout_fd, query.ptr, query.len);
+	if (wrote < 0) return false;
 
 	var buf: [256]u8 = undefined;
 	var total: usize = 0;

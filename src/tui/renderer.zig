@@ -246,7 +246,7 @@ pub fn renderFrameKitty(
 		rgb_bytes[i * 3 + 2] = color.b;
 	}
 
-	var output: std.ArrayListUnmanaged(u8) = .{};
+	var output: std.ArrayListUnmanaged(u8) = .empty;
 	// Rough envelope: base64 grows by 4/3, plus per-chunk header overhead.
 	const est = (rgb_bytes.len * 4 / 3) + (rgb_bytes.len / 3072 + 1) * 48 + 512;
 	try output.ensureTotalCapacity(allocator, est);
@@ -346,7 +346,7 @@ pub fn renderKittyInfoBarOnly(
 		return try allocator.alloc(u8, 0);
 	}
 
-	var output: std.ArrayListUnmanaged(u8) = .{};
+	var output: std.ArrayListUnmanaged(u8) = .empty;
 	try output.ensureTotalCapacity(allocator, 320);
 
 	// Move cursor to (row=height, col=1) — the info bar's row.
@@ -419,7 +419,7 @@ pub fn renderHelpModal(
 	const start_col: u16 = if (width > modal_w_cells) (width - modal_w_cells) / 2 + 1 else 1;
 	const start_row: u16 = if (height > modal_h_cells) (height - modal_h_cells) / 2 + 1 else 1;
 
-	var output: std.ArrayListUnmanaged(u8) = .{};
+	var output: std.ArrayListUnmanaged(u8) = .empty;
 	try output.ensureTotalCapacity(allocator, modal_lines.len * 96);
 
 	// Reset attributes, then white-on-black for modal contents (forces a
