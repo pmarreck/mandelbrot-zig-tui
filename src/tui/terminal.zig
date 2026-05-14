@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const posix = std.posix;
+const runtime = @import("runtime");
 /// Saved original termios for restoration on exit.
 var original_termios: ?posix.termios = null;
 
@@ -207,7 +208,9 @@ pub fn setupSigwinch() void {
 }
 
 /// Signal handler — only touches the atomic flag, nothing else.
-fn handleSigwinch(_: i32) callconv(.c) void {
+/// The 0.16 stdlib redefined `Sigaction.handler_fn` to take `posix.SIG`
+/// (an OS-specific enum) instead of `i32`. We accept the enum and ignore it.
+fn handleSigwinch(_: posix.SIG) callconv(.c) void {
 	resize_flag.store(true, .seq_cst);
 }
 
@@ -228,8 +231,7 @@ pub const TermSize = struct {
 /// Returns true if stdin is connected to a terminal (tty).
 /// Used by animation mode to decide whether to enter raw mode.
 pub fn stdinIsTty() bool {
-	const fd = std.fs.File.stdin().handle;
-	return std.posix.isatty(fd);
+	return std.Io.File.stdin().isTty(runtime.io()) catch false;
 }
 
 
@@ -313,14 +315,13 @@ test "writer-based functions instantiate with fixed buffer writer" {
 	// Instantiate every anytype-writer function with a concrete type
 	// so the compiler fully analyses the function bodies.
 	var buf: [256]u8 = undefined;
-	var fbs = std.io.fixedBufferStream(&buf);
-	const writer = fbs.writer();
+	var w: std.Io.Writer = .fixed(&buf);
 
-	try enableMouseTracking(writer);
-	try disableMouseTracking(writer);
-	try hideCursor(writer);
-	try showCursor(writer);
-	try clearScreen(writer);
+	try enableMouseTracking(&w);
+	try disableMouseTracking(&w);
+	try hideCursor(&w);
+	try showCursor(&w);
+	try clearScreen(&w);
 }
 
 test "SIGWINCH flag starts clear and round-trips" {

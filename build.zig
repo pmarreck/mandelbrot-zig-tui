@@ -11,6 +11,9 @@ pub fn build(b: *std.Build) void {
     // ── Shared module definitions ───────────────────────────────────
     // These are reused by both the main executable and test targets.
 
+    const runtime_mod = b.createModule(.{
+        .root_source_file = b.path("src/runtime.zig"),
+    });
     const cache_mod = b.createModule(.{
         .root_source_file = b.path("src/core/cache.zig"),
     });
@@ -41,6 +44,9 @@ pub fn build(b: *std.Build) void {
     });
     const terminal_mod = b.createModule(.{
         .root_source_file = b.path("src/tui/terminal.zig"),
+        .imports = &.{
+            .{ .name = "runtime", .module = runtime_mod },
+        },
     });
     const renderer_mod = b.createModule(.{
         .root_source_file = b.path("src/tui/renderer.zig"),
@@ -54,6 +60,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "cache", .module = cache_mod },
             .{ .name = "mandelbrot", .module = mandelbrot_mod },
+            .{ .name = "runtime", .module = runtime_mod },
         },
     });
     const app_mod = b.createModule(.{
@@ -68,6 +75,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "pool", .module = pool_mod },
             .{ .name = "coloring", .module = coloring_mod },
             .{ .name = "animation", .module = animation_mod },
+            .{ .name = "runtime", .module = runtime_mod },
         },
     });
 
@@ -87,6 +95,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "mandelbrot", .module = mandelbrot_mod },
                 .{ .name = "coloring", .module = coloring_mod },
                 .{ .name = "animation", .module = animation_mod },
+                .{ .name = "runtime", .module = runtime_mod },
             },
         }),
     });
@@ -119,6 +128,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "mandelbrot", .module = mandelbrot_mod },
                 .{ .name = "coloring", .module = coloring_mod },
                 .{ .name = "animation", .module = animation_mod },
+                .{ .name = "runtime", .module = runtime_mod },
             },
         }),
     });
@@ -213,6 +223,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "pool", .module = pool_mod },
                 .{ .name = "coloring", .module = coloring_mod },
                 .{ .name = "animation", .module = animation_mod },
+                .{ .name = "runtime", .module = runtime_mod },
             },
         }),
     });

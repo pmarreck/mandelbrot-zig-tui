@@ -5,6 +5,13 @@
 const std = @import("std");
 const mandelbrot = @import("mandelbrot");
 
+/// Elapsed nanoseconds between two `std.Io.Timestamp`s.
+/// Mirrors `std.time.Timer.read()` semantics (clamp negative diffs to 0).
+fn elapsedNs(start: std.Io.Timestamp, end: std.Io.Timestamp) u64 {
+	const diff: i96 = end.nanoseconds - start.nanoseconds;
+	return if (diff < 0) 0 else @intCast(diff);
+}
+
 const BenchResult = struct {
 	scenario: []const u8,
 	width: u16,
@@ -17,6 +24,7 @@ const BenchResult = struct {
 };
 
 fn benchmarkScenario(
+	io: std.Io,
 	allocator: std.mem.Allocator,
 	name: []const u8,
 	params: mandelbrot.RegionParams,
@@ -32,20 +40,22 @@ fn benchmarkScenario(
 	mandelbrot.computeRegion(params, buf_seq);
 
 	// Sequential
-	var timer = try std.time.Timer.start();
+	const seq_t0 = std.Io.Timestamp.now(io, .awake);
 	var i: u32 = 0;
 	while (i < n_iters) : (i += 1) {
 		mandelbrot.computeRegion(params, buf_seq);
 	}
-	const seq_ns = timer.read();
+	const seq_t1 = std.Io.Timestamp.now(io, .awake);
+	const seq_ns = elapsedNs(seq_t0, seq_t1);
 
 	// Parallel
-	timer.reset();
+	const par_t0 = std.Io.Timestamp.now(io, .awake);
 	i = 0;
 	while (i < n_iters) : (i += 1) {
 		try mandelbrot.parallelComputeRegion(params, buf_par, null);
 	}
-	const par_ns = timer.read();
+	const par_t1 = std.Io.Timestamp.now(io, .awake);
+	const par_ns = elapsedNs(par_t0, par_t1);
 
 	// Correctness check
 	if (!std.mem.eql(f64, buf_seq, buf_par)) {
@@ -67,13 +77,12 @@ fn benchmarkScenario(
 	};
 }
 
-pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-	defer _ = gpa.deinit();
-	const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+	const allocator = init.gpa;
+	const io = init.io;
 
 	var stderr_buf: [4096]u8 = undefined;
-	var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+	var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
 	const stderr = &stderr_writer.interface;
 
 	if (comptime @import("builtin").mode == .Debug) {
@@ -89,7 +98,7 @@ pub fn main() !void {
 	try stderr.flush();
 
 	// Shallow: default view — mostly escape-velocity points, tests iteration throughput
-	const shallow = try benchmarkScenario(allocator, "Shallow (zoom=1)", .{
+	const shallow = try benchmarkScenario(io, allocator, "Shallow (zoom=1)", .{
 		.center_re = -0.5,
 		.center_im = 0.0,
 		.zoom = 1.0,
@@ -100,7 +109,7 @@ pub fn main() !void {
 	}, N);
 
 	// Deep: zoomed into the seahorse valley — many interior points, stresses max_iter
-	const deep = try benchmarkScenario(allocator, "Deep (zoom=1000)", .{
+	const deep = try benchmarkScenario(io, allocator, "Deep (zoom=1000)", .{
 		.center_re = -0.7435,
 		.center_im = 0.1314,
 		.zoom = 1000.0,
@@ -111,7 +120,7 @@ pub fn main() !void {
 	}, N);
 
 	// Small view — tests thread overhead on less work
-	const small = try benchmarkScenario(allocator, "Small (80x24)", .{
+	const small = try benchmarkScenario(io, allocator, "Small (80x24)", .{
 		.center_re = -0.5,
 		.center_im = 0.0,
 		.zoom = 1.0,
@@ -122,7 +131,7 @@ pub fn main() !void {
 	}, N);
 
 	// Ultra-deep: zoom past F64_THRESHOLD (1e13) forces DD dispatch
-	const ultra_deep = try benchmarkScenario(allocator, "Ultra-deep (zoom=1e16)", .{
+	const ultra_deep = try benchmarkScenario(io, allocator, "Ultra-deep (zoom=1e16)", .{
 		.center_re = -0.7435,
 		.center_im = 0.1314,
 		.zoom = 1.0e16,

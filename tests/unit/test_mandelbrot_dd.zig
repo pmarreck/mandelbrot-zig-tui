@@ -56,7 +56,7 @@ test "DD and f128 agree across zoom depths" {
 }
 
 test "DD dispatches when zoom exceeds F64_THRESHOLD" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -81,7 +81,7 @@ test "DD dispatches when zoom exceeds F64_THRESHOLD" {
 }
 
 test "f64 dispatches when zoom at or below F64_THRESHOLD" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 

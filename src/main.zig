@@ -6,21 +6,29 @@ const renderer = @import("renderer");
 const mandelbrot = @import("mandelbrot");
 const coloring = @import("coloring");
 const animation = @import("animation");
+const runtime = @import("runtime");
 
 const version = "0.1.0";
 
-pub fn main() !void {
-	// .safety = true keeps GPA's per-allocation tracking on in *all* build
-	// modes, not just Debug. Lets the integration suite assert "no `leaked`
-	// lines on stderr after a stress sequence + clean quit" against the
-	// release binary that's already built. Per-alloc overhead is ~24 B and
-	// the bookkeeping is dwarfed by per-frame compute.
-	var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
-	defer _ = gpa.deinit();
-	const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+	// Capture the canonical Io + environ once so the TUI / pool / terminal
+	// layers can reach them without us threading `io` through every signature.
+	// See src/runtime.zig — the migration doc's "Juicy Main + runtime.zig"
+	// pattern (dirtree firsthand note).
+	//
+	// Note: the integration suite's leak-stress invariant ("no `leaked` lines
+	// on stderr after a stress sequence + clean quit") used to rely on
+	// `GeneralPurposeAllocator(.{ .safety = true })` here so per-allocation
+	// tracking stayed on in *all* build modes, not just Debug. Under Juicy
+	// Main the GPA is harness-owned (init.gpa) and is no longer settable from
+	// userland — that expectation now lives at the harness/runtime layer.
+	runtime.set(init.io, init.environ_map);
+
+	const allocator = init.gpa;
+	const io = init.io;
 
 	var stderr_buf: [4096]u8 = undefined;
-	var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+	var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
 	const stderr = &stderr_writer.interface;
 
 	if (comptime @import("builtin").mode == .Debug) {
@@ -28,8 +36,7 @@ pub fn main() !void {
 		try stderr.flush();
 	}
 
-	const args = try std.process.argsAlloc(allocator);
-	defer std.process.argsFree(allocator, args);
+	const args = try init.minimal.args.toSlice(init.arena.allocator());
 
 	var single_frame = false;
 	var bench_zoom_n: ?u32 = null;
@@ -48,7 +55,7 @@ pub fn main() !void {
 	// Otherwise if arg == prefix without =, consume the next arg as the value.
 	// Returns null if the flag doesn't match.
 	const ArgHelper = struct {
-		fn match(arg_val: []const u8, flag_name: []const u8, args_slice: [][:0]u8, idx: *usize) ?[]const u8 {
+		fn match(arg_val: []const u8, flag_name: []const u8, args_slice: []const [:0]const u8, idx: *usize) ?[]const u8 {
 			// Try --flag=VALUE
 			var eq_prefix_buf: [64]u8 = undefined;
 			const eq_prefix = std.fmt.bufPrint(&eq_prefix_buf, "{s}=", .{flag_name}) catch return null;
@@ -70,7 +77,7 @@ pub fn main() !void {
 		const arg = args[i];
 		if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
 			var stdout_buf: [4096]u8 = undefined;
-			var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+			var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
 			const stdout = &stdout_writer.interface;
 			try stdout.print(
 				\\mandelbrot -- interactive TUI Mandelbrot set explorer
@@ -138,7 +145,7 @@ pub fn main() !void {
 		}
 		if (std.mem.eql(u8, arg, "--about")) {
 			var stdout_buf: [4096]u8 = undefined;
-			var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+			var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
 			const stdout = &stdout_writer.interface;
 			try stdout.print("mandelbrot v{s} ({s}-{s})\n", .{
 				version,
@@ -445,7 +452,7 @@ pub fn main() !void {
 		defer allocator.free(frame);
 
 		var stdout_buf: [4096]u8 = undefined;
-		var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+		var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
 		const stdout = &stdout_writer.interface;
 		try stdout.writeAll(frame);
 		try stdout.print("\n", .{});
@@ -479,23 +486,23 @@ fn parseFlagU16(val: []const u8) ?u16 {
 	return std.fmt.parseInt(u16, val, 10) catch null;
 }
 fn parseF128Env(name: []const u8) ?f128 {
-	const val = std.posix.getenv(name) orelse return null;
+	const val = runtime.getEnv(name) orelse return null;
 	const f = std.fmt.parseFloat(f64, val) catch return null;
 	return @as(f128, f);
 }
 
 fn parseU32Env(name: []const u8) ?u32 {
-	const val = std.posix.getenv(name) orelse return null;
+	const val = runtime.getEnv(name) orelse return null;
 	return std.fmt.parseInt(u32, val, 10) catch null;
 }
 
 fn parseU16Env(name: []const u8) ?u16 {
-	const val = std.posix.getenv(name) orelse return null;
+	const val = runtime.getEnv(name) orelse return null;
 	return std.fmt.parseInt(u16, val, 10) catch null;
 }
 
 fn parseBoolEnv(name: []const u8) bool {
-	const val = std.posix.getenv(name) orelse return false;
+	const val = runtime.getEnv(name) orelse return false;
 	// Case-insensitive compare against true/1/yes/on
 	var buf: [16]u8 = undefined;
 	if (val.len >= buf.len) return false;
@@ -507,23 +514,32 @@ fn parseBoolEnv(name: []const u8) bool {
 		std.mem.eql(u8, lower, "on");
 }
 
+/// Elapsed nanoseconds between two `std.Io.Timestamp`s.
+/// Direct subtraction on `nanoseconds: i96` clamped to non-negative,
+/// then narrowed to u64 (matches the old `std.time.Timer.read()` semantics).
+fn elapsedNs(start: std.Io.Timestamp, end: std.Io.Timestamp) u64 {
+	const diff: i96 = end.nanoseconds - start.nanoseconds;
+	return if (diff < 0) 0 else @intCast(diff);
+}
+
 fn runBenchZoomSequence(
 	allocator: std.mem.Allocator,
 	initial_state: app.AppState,
 	n: u32,
 	quiet: bool,
 ) !void {
+	const io = runtime.io();
 	var stderr_buf: [4096]u8 = undefined;
-	var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+	var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buf);
 	const stderr = &stderr_writer.interface;
 
 	// Canonical bench target: seahorse valley at 120x40. Env vars can override.
 	var state = initial_state;
-	if (std.posix.getenv("MANDELBROT_CENTER_RE") == null) state.center_re = -0.7435;
-	if (std.posix.getenv("MANDELBROT_CENTER_IM") == null) state.center_im = 0.1314;
-	if (std.posix.getenv("MANDELBROT_ZOOM") == null) state.zoom = 1.0;
-	if (std.posix.getenv("MANDELBROT_COLS") == null) state.term_width = 120;
-	if (std.posix.getenv("MANDELBROT_ROWS") == null) state.term_height = 40;
+	if (runtime.getEnv("MANDELBROT_CENTER_RE") == null) state.center_re = -0.7435;
+	if (runtime.getEnv("MANDELBROT_CENTER_IM") == null) state.center_im = 0.1314;
+	if (runtime.getEnv("MANDELBROT_ZOOM") == null) state.zoom = 1.0;
+	if (runtime.getEnv("MANDELBROT_COLS") == null) state.term_width = 120;
+	if (runtime.getEnv("MANDELBROT_ROWS") == null) state.term_height = 40;
 
 	try stderr.print("=== Zoom Sequence Benchmark ({d}x{d}, base_iter={d}, N={d}) ===\n", .{
 		state.term_width, state.term_height, state.base_iter, n,
@@ -532,7 +548,6 @@ fn runBenchZoomSequence(
 
 	var total_compute_ns: u64 = 0;
 	var total_render_ns: u64 = 0;
-	var timer = try std.time.Timer.start();
 
 	var frame: u32 = 0;
 	while (frame < n) : (frame += 1) {
@@ -545,7 +560,7 @@ fn runBenchZoomSequence(
 		const iter_buf = try allocator.alloc(f64, pixel_count);
 		defer allocator.free(iter_buf);
 
-		timer.reset();
+		const compute_t0 = std.Io.Timestamp.now(io, .awake);
 		try mandelbrot.parallelComputeRegion(.{
 			.center_re = state.center_re,
 			.center_im = state.center_im,
@@ -555,10 +570,11 @@ fn runBenchZoomSequence(
 			.max_iter = state.max_iter,
 			.aspect_ratio = 0.5,
 		}, iter_buf, null);
-		const compute_ns = timer.read();
+		const compute_t1 = std.Io.Timestamp.now(io, .awake);
+		const compute_ns: u64 = elapsedNs(compute_t0, compute_t1);
 		total_compute_ns += compute_ns;
 
-		timer.reset();
+		const render_t0 = std.Io.Timestamp.now(io, .awake);
 		const frame_bytes = try renderer.renderFrameFromBuffer(.{
 			.center_re = state.center_re,
 			.center_im = state.center_im,
@@ -567,7 +583,8 @@ fn runBenchZoomSequence(
 			.show_info = state.show_info,
 		}, state.term_width, state.term_height, iter_buf, allocator);
 		defer allocator.free(frame_bytes);
-		const render_ns = timer.read();
+		const render_t1 = std.Io.Timestamp.now(io, .awake);
+		const render_ns: u64 = elapsedNs(render_t0, render_t1);
 		total_render_ns += render_ns;
 
 		if (!quiet) {

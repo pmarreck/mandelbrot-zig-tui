@@ -3,7 +3,7 @@ const testing = std.testing;
 const cache = @import("cache");
 
 test "CacheLevel init and deinit" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -25,7 +25,7 @@ test "CacheLevel init and deinit" {
 }
 
 test "CacheLevel pointAt returns correct complex coordinate" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -51,7 +51,7 @@ test "CacheLevel pointAt returns correct complex coordinate" {
 }
 
 test "CacheLevel get/set data by grid coords" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -71,7 +71,7 @@ test "CacheLevel get/set data by grid coords" {
 }
 
 test "CacheLevel containsViewport checks bounds" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -93,7 +93,7 @@ test "CacheLevel containsViewport checks bounds" {
 }
 
 test "CacheLevel sampleStride extracts points at regular intervals" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -139,7 +139,7 @@ test "CacheStack init creates empty stack" {
 }
 
 test "CacheStack initForViewport creates Level 0" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -156,7 +156,7 @@ test "CacheStack initForViewport creates Level 0" {
 }
 
 test "CacheStack createLevel creates a 2x level with parent bounds" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -177,7 +177,7 @@ test "CacheStack createLevel creates a 2x level with parent bounds" {
 }
 
 test "CacheStack findCoveringLevel: 2x zoom-in at center hits Level 1" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -210,7 +210,7 @@ test "CacheStack findCoveringLevel: 2x zoom-in at center hits Level 1" {
 }
 
 test "CacheStack findCoveringLevel: incomplete level is rejected" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -233,7 +233,7 @@ test "CacheStack findCoveringLevel: incomplete level is rejected" {
 }
 
 test "CacheStack findCoveringLevel: zoom-out (step doesn't match) misses" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -257,7 +257,7 @@ test "CacheStack findCoveringLevel: zoom-out (step doesn't match) misses" {
 }
 
 test "CacheStack findCoveringLevel: max_iter mismatch is allowed (zoom-in semantics)" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -287,7 +287,7 @@ test "CacheStack findCoveringLevel: max_iter mismatch is allowed (zoom-in semant
 }
 
 test "CacheStack findCoveringLevel: 2x zoom-in at corner exceeds level bbox" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -316,7 +316,7 @@ test "CacheStack findCoveringLevel: 2x zoom-in at corner exceeds level bbox" {
 }
 
 test "CacheStack extractInto: copies the right sub-grid" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -352,7 +352,7 @@ test "CacheStack extractInto: copies the right sub-grid" {
 }
 
 test "CacheStack invalidateAll clears everything" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -370,7 +370,7 @@ test "CacheStack invalidateAll clears everything" {
 }
 
 test "CacheStack nextIncompleteLevel finds first gap" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -385,7 +385,7 @@ test "CacheStack nextIncompleteLevel finds first gap" {
 }
 
 test "CacheStack nextIncompleteLevel returns null when all complete" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

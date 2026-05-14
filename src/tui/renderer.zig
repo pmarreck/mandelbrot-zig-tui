@@ -32,7 +32,7 @@ pub fn renderFrameFromBuffer(
     const render_height: u16 = if (state.show_info and height > 1) height - 1 else height;
     const pixel_count: usize = @as(usize, width) * @as(usize, render_height);
 
-    var output: std.ArrayListUnmanaged(u8) = .{};
+    var output: std.ArrayListUnmanaged(u8) = .empty;
 
     // True-color escapes are ~20 bytes per color change: \x1b[38;2;RRR;GGG;BBBm
     try output.ensureTotalCapacity(allocator, 6 + pixel_count * 25 + 300);
@@ -123,7 +123,7 @@ pub fn renderFrameFromBlocksBuffer(
 	const render_height: u16 = if (state.show_info and height > 1) height - 1 else height;
 	const sub_width: u32 = @as(u32, width) * 2;
 
-	var output: std.ArrayListUnmanaged(u8) = .{};
+	var output: std.ArrayListUnmanaged(u8) = .empty;
 
 	// Each block cell emits ~40 bytes worst case (color escape + 3-byte UTF-8 char).
 	try output.ensureTotalCapacity(allocator, 6 + @as(usize, width) * @as(usize, render_height) * 40 + 300);

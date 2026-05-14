@@ -3,7 +3,7 @@ const testing = std.testing;
 const mandelbrot = @import("mandelbrot");
 
 test "parallelComputeRegion matches sequential computeRegion" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -30,7 +30,7 @@ test "parallelComputeRegion matches sequential computeRegion" {
 }
 
 test "parallelComputeRegion works with odd row count" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -57,7 +57,7 @@ test "parallelComputeRegion works with odd row count" {
 }
 
 test "parallelComputeRegion handles small heights (fewer rows than threads)" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -87,7 +87,7 @@ test "parallelComputeRegion handles small heights (fewer rows than threads)" {
 const cache = @import("cache");
 
 test "inheritFromParent copies parent data to even-indexed child positions" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -135,7 +135,7 @@ test "inheritFromParent copies parent data to even-indexed child positions" {
 }
 
 test "computeRegionDirect fills a CacheLevel correctly" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -168,7 +168,7 @@ test "computeRegionDirect fills a CacheLevel correctly" {
 }
 
 test "computeDoubling: even-indexed child points match parent" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -212,7 +212,7 @@ test "computeDoubling: even-indexed child points match parent" {
 }
 
 test "computeDoubling: full child matches sequential full-resolution compute" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -260,7 +260,7 @@ test "computeDoubling: full child matches sequential full-resolution compute" {
 }
 
 test "computeDoubling: cancelled via generation counter leaves complete=false" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -305,7 +305,7 @@ test "computeDoubling: cancelled via generation counter leaves complete=false" {
 }
 
 test "parallelComputeRegion with explicit thread count produces identical output" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -341,7 +341,7 @@ test "autoThreadCount returns something sensible" {
 }
 
 test "computeRowStride produces same result as computeRegion" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -374,7 +374,7 @@ test "computeRowStride produces same result as computeRegion" {
 }
 
 test "computeRowStride single thread matches computeRegion" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -431,7 +431,7 @@ test "computeIterations f64 matches computeIterationsF128 at shallow zoom" {
 }
 
 test "f64 dispatch counter increments on shallow zoom" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -457,7 +457,7 @@ test "f64 dispatch counter increments on shallow zoom" {
 }
 
 test "dd dispatch counter increments on deep zoom" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 

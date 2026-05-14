@@ -4,7 +4,7 @@ const renderer = @import("renderer");
 const mandelbrot = @import("mandelbrot");
 
 test "renderFrame produces output for small terminal" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -25,7 +25,7 @@ test "renderFrame produces output for small terminal" {
 }
 
 test "renderFrame with info bar includes coordinate info" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -44,7 +44,7 @@ test "renderFrame with info bar includes coordinate info" {
 }
 
 test "renderFrame is deterministic" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -65,7 +65,7 @@ test "renderFrame is deterministic" {
 }
 
 test "renderFrame interior region contains interior points" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -85,7 +85,7 @@ test "renderFrame interior region contains interior points" {
 }
 
 test "renderFrameFromBuffer produces same output as renderFrame" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -126,7 +126,7 @@ test "renderFrameFromBuffer produces same output as renderFrame" {
 }
 
 test "renderFrameFromBlocksBuffer produces ANSI + block chars" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -157,7 +157,7 @@ test "renderFrameFromBlocksBuffer produces ANSI + block chars" {
 }
 
 test "renderFrameFromBlocksBuffer all-interior produces no block chars" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 
@@ -188,7 +188,7 @@ test "renderFrameFromBlocksBuffer all-interior produces no block chars" {
 }
 
 test "renderFrameFromBlocksBuffer is deterministic" {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	defer _ = gpa.deinit();
 	const allocator = gpa.allocator();
 

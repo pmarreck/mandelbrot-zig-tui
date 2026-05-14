@@ -6,6 +6,14 @@
 const std = @import("std");
 const cache_mod = @import("cache");
 const mandelbrot = @import("mandelbrot");
+const runtime = @import("runtime");
+
+/// Sleep for `ms` milliseconds via `std.Io.sleep`. Errors are swallowed since
+/// the coordinator already polls a stop flag; a cancelled sleep just falls
+/// through to the next loop iteration.
+fn sleepMs(ms: u64) void {
+	std.Io.sleep(runtime.io(), .fromMilliseconds(@intCast(ms)), .awake) catch {};
+}
 
 pub const BackgroundScheduler = struct {
 	/// Atomic generation counter. Bumped on every user action that changes
@@ -70,13 +78,13 @@ pub const BackgroundScheduler = struct {
 
 			const next = self.cache.nextIncompleteLevel() orelse {
 				// All levels complete — sleep briefly and check again
-				std.Thread.sleep(50 * std.time.ns_per_ms);
+				sleepMs(50);
 				continue;
 			};
 
 			// Level 0 is foreground's job
 			if (next == 0) {
-				std.Thread.sleep(10 * std.time.ns_per_ms);
+				sleepMs(10);
 				continue;
 			}
 
@@ -84,11 +92,11 @@ pub const BackgroundScheduler = struct {
 			const parent_idx = next - 1;
 			if (self.cache.levels[parent_idx]) |parent| {
 				if (!parent.complete) {
-					std.Thread.sleep(10 * std.time.ns_per_ms);
+					sleepMs(10);
 					continue;
 				}
 			} else {
-				std.Thread.sleep(10 * std.time.ns_per_ms);
+				sleepMs(10);
 				continue;
 			}
 
@@ -98,7 +106,7 @@ pub const BackgroundScheduler = struct {
 			// Create the level if it doesn't exist
 			if (self.cache.levels[next] == null) {
 				self.cache.createLevel(self.allocator, next) catch {
-					std.Thread.sleep(100 * std.time.ns_per_ms);
+					sleepMs(100);
 					continue;
 				};
 			}
@@ -117,7 +125,7 @@ pub const BackgroundScheduler = struct {
 				if (self.cache.levels[parent_idx]) |*parent| {
 					mandelbrot.computeDoubling(parent, child, &self.generation) catch {
 						// Spawn failure — back off briefly and retry
-						std.Thread.sleep(100 * std.time.ns_per_ms);
+						sleepMs(100);
 						continue;
 					};
 				}
