@@ -4,19 +4,24 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    zig-overlay = {
+      url = "github:mitchellh/zig-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, zig-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        zig = zig-overlay.packages.${system}."0.16.0";
         pname = "mandelbrot";
         version = "0.1.0";
       in {
         packages.default = pkgs.stdenv.mkDerivation {
           inherit pname version;
           src = ./.;
-          nativeBuildInputs = [ pkgs.zig ];
+          nativeBuildInputs = [ zig ];
           dontConfigure = true;
           dontFixup = true;
           buildPhase = ''
@@ -33,7 +38,7 @@
             pname = "${pname}-test";
             inherit version;
             src = ./.;
-            nativeBuildInputs = [ pkgs.zig ];
+            nativeBuildInputs = [ zig ];
             dontConfigure = true;
             dontFixup = true;
             buildPhase = ''
@@ -53,7 +58,7 @@
             pname = "${pname}-cli-test";
             inherit version;
             src = ./.;
-            nativeBuildInputs = [ pkgs.zig pkgs.bash ];
+            nativeBuildInputs = [ zig pkgs.bash ];
             dontConfigure = true;
             dontFixup = true;
             buildPhase = ''
@@ -74,7 +79,7 @@
             pname = "${pname}-tmux-test";
             inherit version;
             src = ./.;
-            nativeBuildInputs = [ pkgs.zig pkgs.bash pkgs.tmux pkgs.gnugrep pkgs.gawk pkgs.coreutils ];
+            nativeBuildInputs = [ zig pkgs.bash pkgs.tmux pkgs.gnugrep pkgs.gawk pkgs.coreutils ];
             dontConfigure = true;
             dontFixup = true;
             buildPhase = ''
@@ -91,9 +96,9 @@
         };
 
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
+          buildInputs = [
             zig
-            hyperfine
+            pkgs.hyperfine
           ];
         };
       });
