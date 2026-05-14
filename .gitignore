@@ -11,3 +11,4 @@ result-*
 inbox/
 .DS_Store
 .codescan
+.direnv/
