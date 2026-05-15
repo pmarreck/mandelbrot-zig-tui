@@ -44,6 +44,7 @@ pub fn build(b: *std.Build) void {
     });
     const terminal_mod = b.createModule(.{
         .root_source_file = b.path("src/tui/terminal.zig"),
+        .link_libc = true,
         .imports = &.{
             .{ .name = "runtime", .module = runtime_mod },
         },
