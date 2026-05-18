@@ -148,8 +148,14 @@ pub fn probeKittyGraphicsSupport() bool {
 	// i=31 is an arbitrary id we'll look for in the response so we don't
 	// confuse it with replies to other queries that may be in flight.
 	const query = "\x1b_Gi=31,a=q,t=d,f=24,s=1,v=1;AAAA\x1b\\";
-	// std.posix.write was removed in Zig 0.16; use std.c.write directly.
-	const wrote = std.c.write(stdout_fd, query.ptr, query.len);
+	// std.posix.write was removed in Zig 0.16. Avoid std.c.write to keep
+	// the binary libc-free on linux (so it works in Nix sandbox without
+	// needing the glibc dynamic interpreter). Use direct syscalls.
+	const wrote: isize = switch (@import("builtin").os.tag) {
+		.linux => @as(isize, @bitCast(std.os.linux.write(stdout_fd, query.ptr, query.len))),
+		.macos, .ios, .watchos, .tvos, .visionos => std.c.write(stdout_fd, query.ptr, query.len),
+		else => std.c.write(stdout_fd, query.ptr, query.len),
+	};
 	if (wrote < 0) return false;
 
 	var buf: [256]u8 = undefined;

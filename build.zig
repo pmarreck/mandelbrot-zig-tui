@@ -44,7 +44,10 @@ pub fn build(b: *std.Build) void {
     });
     const terminal_mod = b.createModule(.{
         .root_source_file = b.path("src/tui/terminal.zig"),
-        .link_libc = true,
+        // Only link libc on darwin (where std.c.write is used).
+        // On linux we use std.os.linux.write to avoid needing the glibc
+        // dynamic interpreter in the Nix build sandbox.
+        .link_libc = target.result.os.tag == .macos,
         .imports = &.{
             .{ .name = "runtime", .module = runtime_mod },
         },
