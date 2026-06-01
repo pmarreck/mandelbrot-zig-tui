@@ -25,6 +25,7 @@
 - [x] Block quadrant glyph mode (2×2 sub-pixel rendering, `g` toggle, `--glyph=blocks`, `MANDELBROT_SUBBLOCK` env var) — ~2026-04-20 EST
 - [x] Animated zoom mode (`--animate`, linear center + log zoom, stats to stderr, non-tty aware for recording) — ~2026-04-20 EST
 - [x] Double-double arithmetic replacing f128 soft-float fallback — ~2026-04-20 EST
+- [x] Fix kitty info-bar toggle scroll (`i` in high-resolution graphics mode) — 2026-06-01 05:42 EDT
 
 ## Performance Evidence
 

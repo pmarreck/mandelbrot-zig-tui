@@ -79,6 +79,10 @@ pub const AppState = struct {
 	/// next frame in kitty mode (where the kitty graphics command places
 	/// an image but does not overwrite cell text content).
 	last_rendered_modal: bool = false,
+	/// Tracks info-bar visibility for the most recent normal frame. Kitty
+	/// images sit below text cells, so toggling the bar must clear old text
+	/// before placing the next image.
+	last_rendered_show_info: ?bool = null,
 };
 
 pub fn defaultState() AppState {
@@ -355,6 +359,17 @@ pub fn renderOneFrame(
 		try terminal.clearScreen(stdout);
 	}
 
+	// Kitty info-bar visibility changed: clear stale text cells before
+	// placing the next image. The image itself is below text/background
+	// cells, so it cannot overwrite an old reverse-video info bar.
+	if (state.glyph_mode == .kitty and
+		state.last_rendered_glyph_mode == .kitty and
+		state.last_rendered_show_info != null and
+		state.last_rendered_show_info.? != state.show_info)
+	{
+		try terminal.clearScreen(stdout);
+	}
+
 	// Modal close → clearScreen so modal box-drawing chars don't ghost
 	// through. Cell-mode renders fill every cell anyway, but kitty's
 	// image-placement command alone doesn't overwrite cell text.
@@ -400,6 +415,7 @@ pub fn renderOneFrame(
 		try stdout.flush();
 		state.needs_redraw = false;
 		state.last_rendered_modal = false;
+		state.last_rendered_show_info = state.show_info;
 		// last_rendered_glyph_mode stays .kitty
 		if (state.frame_marker) {
 			try stdout.writeAll("\x1b_=FRAME=\x1b\\");
@@ -421,6 +437,7 @@ pub fn renderOneFrame(
 	state.needs_redraw = false;
 	state.last_rendered_glyph_mode = state.glyph_mode;
 	state.last_rendered_modal = false;
+	state.last_rendered_show_info = state.show_info;
 
 	if (state.frame_marker) {
 		try stdout.writeAll("\x1b_=FRAME=\x1b\\");

@@ -88,6 +88,7 @@
 - `enableMouseTracking() / disableMouseTracking()` — SGR 1006 mouse protocol
 - `hideCursor() / showCursor()` — cursor visibility
 - `clearScreen()` — clear and home
+- `deleteKittyImageById(stdout, id)` / `placeKittyImageById(stdout, id)` — kitty graphics image lifecycle; placement uses `C=1` so restoring a full-height image cannot scroll the terminal
 - `setupSigwinch()` — SIGWINCH handler with atomic flag
 - `checkAndClearResizeFlag()` — poll and reset resize flag
 - `getTermSizePosix()` — ioctl TIOCGWINSZ (macOS + Linux)
@@ -103,6 +104,9 @@
 - `renderFrame(state, width, height, allocator)` — convenience: compute + render (density mode only)
 - `renderFrameFromBuffer(state, width, height, iter_buf, allocator)` — density-mode render from pre-computed buffer
 - `renderFrameFromBlocksBuffer(state, width, height, iter_buf, allocator)` — blocks-mode render from 2×-resolution pre-computed buffer
+- `renderFrameKitty(state, width, height, cell_px_w, cell_px_h, iter_buf, allocator)` — kitty graphics render from native-pixel buffer; image placement uses `C=1` and info bar is explicitly positioned on the last terminal row
+- `renderKittyInfoBarOnly(state, width, height, allocator)` — repaint only the kitty info bar for unchanged-image fast paths
+- `renderHelpModal(width, height, allocator)` — centered keyboard/mouse help overlay
 - `RenderState` — struct: center, zoom, max_iter, show_info, glyph_mode
 
 ## `src/tui/pool.zig`
@@ -124,16 +128,17 @@
 - `processEvent(state, event)` — pure state transition function
 - `viewportChanged(old, new)` — detects when cache invalidation is needed
 - `defaultState()` — initial AppState with standard defaults
-- `AppState` — struct: center, zoom, iters, info, dimensions, flags, drag state, glyph mode
+- `AppState` — struct: center, zoom, iters, info, dimensions, flags, drag state, glyph mode, kitty render bookkeeping (`last_rendered_glyph_mode`, `last_rendered_modal`, `last_rendered_show_info`)
 
 ## `tests/unit/test_mandelbrot.zig` — escape-time + region computation tests (9 tests)
 ## `tests/unit/test_viewport.zig` — coordinate mapping, zoom, pan, adaptive iter tests (7 tests)
 ## `tests/unit/test_coloring.zig` — density chars, color range, gradient smoothness tests (5 tests)
 ## `tests/unit/test_input.zig` — key, arrow, mouse, Ctrl-C, drag, scroll parsing tests (17 tests)
-## `tests/unit/test_renderer.zig` — frame output, info bar, determinism, buffer-consistency tests (5 tests)
+## `tests/unit/test_renderer.zig` — frame output, info bar, determinism, buffer-consistency, kitty cursor-neutral placement tests (10 tests)
 ## `tests/unit/test_cache.zig` — CacheLevel + CacheStack structure/shift/invalidation tests (12 tests)
 ## `tests/unit/test_parallel.zig` — parallel compute, inheritFromParent, computeDoubling tests (8 tests)
 ## `tests/cli/test_cli.bash` — CLI integration tests: help, about, single-frame, determinism (7 tests)
+## `tests/integration/test_tmux.bash` — PTY integration tests: initial render, key handling, help modal open/close, SIGWINCH redraw, `--force-kitty`, kitty zoom/click/modal/info-toggle regressions
 ## `tests/benchmark/bench_render.zig` — sequential vs parallel render speedup benchmark
 
 ## `bm`

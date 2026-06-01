@@ -216,3 +216,57 @@ test "renderFrameFromBlocksBuffer is deterministic" {
 
 	try testing.expectEqualSlices(u8, out1, out2);
 }
+
+test "renderFrameKitty requests no cursor movement for full-height image" {
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
+	defer _ = gpa.deinit();
+	const allocator = gpa.allocator();
+
+	const state = renderer.RenderState{
+		.center_re = -0.5,
+		.center_im = 0.0,
+		.zoom = 1.0,
+		.max_iter = 50,
+		.show_info = false,
+		.glyph_mode = .kitty,
+	};
+
+	const width: u16 = 2;
+	const height: u16 = 3;
+	const cell_px_w: u16 = 1;
+	const cell_px_h: u16 = 1;
+	var iter_buf: [6]f64 = .{ 1, 2, 3, 4, 5, 6 };
+
+	const output = try renderer.renderFrameKitty(state, width, height, cell_px_w, cell_px_h, &iter_buf, allocator);
+	defer allocator.free(output);
+
+	try testing.expect(std.mem.indexOf(u8, output, "C=1") != null);
+}
+
+test "renderFrameKitty positions info bar explicitly on last terminal row" {
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
+	defer _ = gpa.deinit();
+	const allocator = gpa.allocator();
+
+	const state = renderer.RenderState{
+		.center_re = -0.5,
+		.center_im = 0.0,
+		.zoom = 1.0,
+		.max_iter = 50,
+		.show_info = true,
+		.glyph_mode = .kitty,
+	};
+
+	const width: u16 = 80;
+	const height: u16 = 3;
+	const cell_px_w: u16 = 1;
+	const cell_px_h: u16 = 1;
+	var iter_buf: [160]f64 = undefined;
+	@memset(&iter_buf, 1.0);
+
+	const output = try renderer.renderFrameKitty(state, width, height, cell_px_w, cell_px_h, &iter_buf, allocator);
+	defer allocator.free(output);
+
+	try testing.expect(std.mem.indexOf(u8, output, "\x1b[3;1H") != null);
+	try testing.expect(std.mem.indexOf(u8, output, "MANDELBROT_CENTER_RE") != null);
+}

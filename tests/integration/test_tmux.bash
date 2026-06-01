@@ -358,7 +358,39 @@ else
 	teardown
 fi
 
-# ── Test 13: memory leak stress — drive every allocating code path with
+# ── Test 13: kitty-mode info-bar toggle stays cursor-neutral ───────────
+# Reproduces the high-resolution graphics bug surface: pressing 'i'
+# hides the info bar, making the kitty image full terminal height. The
+# image placement must include C=1 (no cursor movement), otherwise a
+# full-height placement can advance the terminal cursor past the bottom
+# row and scroll the viewport.
+setup "kitty_info_toggle" 140 24 --kitty --force-kitty
+wait_frame || true
+pre_i_size=$(wc -c < "$LOG_PATH")
+tmux send-keys -t "$SESSION" "i"
+if wait_frame; then
+	if tail -c +$((pre_i_size + 1)) "$LOG_PATH" | grep -q 'C=1'; then
+		pass "kitty info toggle emits no-cursor-move image placement"
+	else
+		fail "kitty info toggle emits no-cursor-move image placement" "no C=1 in post-toggle kitty command"
+	fi
+	if capture | grep -q "MANDELBROT_CENTER_RE"; then
+		fail "kitty info toggle hides info bar" "info bar still visible after first i"
+	else
+		pass "kitty info toggle hides info bar"
+	fi
+	tmux send-keys -t "$SESSION" "i"
+	if wait_frame && capture | grep -q "MANDELBROT_CENTER_RE"; then
+		pass "kitty info toggle restores info bar"
+	else
+		fail "kitty info toggle restores info bar"
+	fi
+else
+	fail "kitty info toggle emits no-cursor-move image placement" "no frame marker after i"
+fi
+teardown
+
+# ── Test 14: memory leak stress — drive every allocating code path with
 #             a barrage of zoom-in / pan / zoom-out / mode-cycle / modal
 #             actions, then quit cleanly via 'q'. main.zig sets GPA's
 #             safety=true unconditionally, so the `defer gpa.deinit()`

@@ -217,8 +217,8 @@ pub fn renderFrameFromBlocksBuffer(
 /// values, row-major; each is converted to an RGB triple via coloring.iterToColor
 /// and the whole image is transmitted as raw RGB chunked base64 over the
 /// kitty graphics escape protocol. The image displays at the current cursor
-/// position and cursor moves down by render_height cells, so the optional
-/// info bar lands at the last row in step with density/blocks modes.
+/// position without moving the terminal cursor; the optional info bar is
+/// positioned explicitly so full-height images never scroll the terminal.
 /// Caller owns the returned memory.
 pub fn renderFrameKitty(
 	state: RenderState,
@@ -257,7 +257,8 @@ pub fn renderFrameKitty(
 	// Kitty graphics chunked transmission.
 	// f=24 RGB, t=d direct payload, a=T transmit + display,
 	// i=1 image ID (reusing the same slot frees prior frame),
-	// q=2 suppress all responses, m=1/0 chunk continuation marker.
+	// q=2 suppress all responses, C=1 prevents cursor movement, m=1/0
+	// chunk continuation marker.
 	// Per spec the base64 payload of each chunk should be ≤ 4096 chars,
 	// so we feed 3072 raw bytes per chunk (3072 * 4/3 = 4096).
 	const CHUNK_RAW: usize = 3072;
@@ -282,7 +283,7 @@ pub fn renderFrameKitty(
 		// show the image through.
 		var hdr_buf: [128]u8 = undefined;
 		const hdr = if (first_chunk)
-			std.fmt.bufPrint(&hdr_buf, "\x1b_Gf=24,s={d},v={d},a=T,t=d,i=1,q=2,z=-2147483648,m={c};", .{ px_w, px_h, m_flag }) catch unreachable
+			std.fmt.bufPrint(&hdr_buf, "\x1b_Gf=24,s={d},v={d},a=T,t=d,i=1,q=2,C=1,z=-2147483648,m={c};", .{ px_w, px_h, m_flag }) catch unreachable
 		else
 			std.fmt.bufPrint(&hdr_buf, "\x1b_Gm={c};", .{m_flag}) catch unreachable;
 		try output.appendSlice(allocator, hdr);
@@ -300,9 +301,13 @@ pub fn renderFrameKitty(
 		first_chunk = false;
 	}
 
-	// Info bar: kitty leaves the cursor at row (render_height + 1) which is
-	// term_height when show_info is on — exactly where we want the bar.
+	// Info bar: explicitly place it on the terminal's last row. This keeps
+	// the image command cursor-neutral, including when show_info=false and
+	// the image is full-height.
 	if (state.show_info and height > 1) {
+		var pos_buf: [32]u8 = undefined;
+		const pos = std.fmt.bufPrint(&pos_buf, "\x1b[{d};1H", .{height}) catch unreachable;
+		try output.appendSlice(allocator, pos);
 		try output.appendSlice(allocator, "\x1b[0m\x1b[7m");
 
 		var info_buf: [256]u8 = undefined;

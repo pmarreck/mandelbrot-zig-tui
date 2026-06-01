@@ -194,11 +194,12 @@ pub fn deleteKittyImageById(writer: anytype, id: u32) !void {
 /// using its ID. Used after clearScreen to restore the image — `\x1b[2J`
 /// erases image placements on some terminals (e.g. ghostty) while preserving
 /// the underlying image data. a=p re-creates the placement without
-/// retransmitting the (multi-megabyte) base64 RGB payload. q=2 suppresses
-/// any response.
+/// retransmitting the (multi-megabyte) base64 RGB payload. C=1 prevents
+/// cursor movement so full-height placements cannot scroll the terminal;
+/// q=2 suppresses any response.
 pub fn placeKittyImageById(writer: anytype, id: u32) !void {
 	var buf: [64]u8 = undefined;
-	const seq = std.fmt.bufPrint(&buf, "\x1b_Ga=p,i={d},q=2\x1b\\", .{id}) catch return;
+	const seq = std.fmt.bufPrint(&buf, "\x1b_Ga=p,i={d},C=1,q=2\x1b\\", .{id}) catch return;
 	try writer.writeAll(seq);
 }
 
